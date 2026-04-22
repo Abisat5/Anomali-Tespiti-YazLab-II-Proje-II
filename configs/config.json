@@ -1,0 +1,44 @@
+{
+  "project": {
+    "group_id": 30,
+    "datasets": ["WADI", "BATADAL"]
+  },
+  "paths": {
+    "raw_data": "data/raw/",
+    "processed_data": "data/processed/",
+    "logs": "logs/",
+    "models": "src/models/saved_weights/"
+  },
+  "data_split": {
+    "train": 0.60,
+    "validation": 0.20,
+    "test": 0.20
+  },
+  "experiment_settings": {
+    "random_seeds": [42, 123, 2026, 7, 999],
+    "noise_injection": {
+      "type": "gaussian",
+      "mean": 0.0,
+      "std_dev": 0.05
+    }
+  },
+  "deep_learning": {
+    "epochs": 50,
+    "batch_size": 32,
+    "early_stopping_patience": 5,
+    "learning_rate": 0.001
+  },
+  "automata": {
+    "base_params": {
+      "window_size": 4,
+      "alphabet_size": 3
+    },
+    "variation_params": {
+      "window_sizes": [3, 4, 5, 6],
+      "alphabet_sizes": [3, 4, 5, 6]
+    }
+  },
+  "explainability": {
+    "output_format": "json"
+  }
+}
