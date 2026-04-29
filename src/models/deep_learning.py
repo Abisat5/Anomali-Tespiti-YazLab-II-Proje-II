@@ -41,3 +41,43 @@ class CNN1DAnomalyDetector:
 
     def summary(self):
         self.model.summary()
+
+class LSTMAnomalyDetector:
+    def __init__(self, config, seq_len, n_features):
+        """
+        Zaman serilerindeki uzun vadeli ardışık bağımlılıkları öğrenen LSTM Autoencoder Modeli.
+        """
+        self.config = config
+        self.seq_len = seq_len
+        self.n_features = n_features
+        self.learning_rate = config['deep_learning']['learning_rate']
+        self.model = self._build_model()
+
+    def _build_model(self):
+        """LSTM Autoencoder mimarisini oluşturur."""
+        print("[LSTM] Model mimarisi inşa ediliyor...")
+        model = models.Sequential(name="LSTM_Autoencoder")
+        
+        # Encoder
+        model.add(layers.Input(shape=(self.seq_len, self.n_features)))
+        model.add(layers.LSTM(64, activation='relu', return_sequences=True))
+        model.add(layers.LSTM(32, activation='relu', return_sequences=False))
+        
+        # Darboğaz (Bottleneck) sonrası veriyi zaman adımlarına göre kopyala
+        model.add(layers.RepeatVector(self.seq_len))
+        
+        # Decoder
+        model.add(layers.LSTM(32, activation='relu', return_sequences=True))
+        model.add(layers.LSTM(64, activation='relu', return_sequences=True))
+        
+        # Çıktı Katmanı (Her zaman adımı için orijinal özellikleri tahmin et)
+        model.add(layers.TimeDistributed(layers.Dense(self.n_features)))
+        
+        # Optimizasyon ve Derleme
+        optimizer = tf.keras.optimizers.Adam(learning_rate=self.learning_rate)
+        model.compile(optimizer=optimizer, loss='mse')
+        
+        return model
+
+    def summary(self):
+        self.model.summary()
