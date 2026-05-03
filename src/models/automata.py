@@ -38,3 +38,25 @@ class ProbabilisticAutomata:
             
         print(f"[Automata] Toplam {len(patterns)} adet örüntü dizisi çıkarıldı.")
         return patterns
+    def build_transition_model(self, patterns):
+        print("[Automata] Olasılıksal durum geçiş (Transition) modeli inşa ediliyor...")
+        transition_counts = {}
+        for i in range(len(patterns) - 1):
+            current_state = patterns[i]
+            next_state = patterns[i + 1]
+            if current_state not in transition_counts:
+                transition_counts[current_state] = {}
+            if next_state not in transition_counts[current_state]:
+                transition_counts[current_state][next_state] = 0
+                
+            transition_counts[current_state][next_state] += 1
+        self.transition_probabilities = {}
+        
+        for current_state, transitions in transition_counts.items():
+            total_transitions = sum(transitions.values())
+            self.transition_probabilities[current_state] = {
+                next_state: float(count / total_transitions)
+                for next_state, count in transitions.items()
+            }
+        print(f"[Automata] Transition Modeli Tamamlandı. Toplam benzersiz durum (State) sayısı: {len(self.transition_probabilities)}")
+        return self.transition_probabilities
