@@ -22,3 +22,19 @@ class ProbabilisticAutomata:
     def apply_sax(self, paa_data):
         print("[Automata] PAA verisi SAX sembollerine dönüştürülüyor...")
         return self.sax_converter.transform(paa_data)
+    
+    def extract_patterns(self, sax_symbols, window_size):
+        """
+        Sliding Window (Kayan Pencere) mantığı ile SAX sembol dizisinden
+        belirli uzunlukta alt örüntüler (kelimeler) çıkarır.
+        """
+        print(f"[Automata] Sliding Window (Boyut: {window_size}) ile örüntüler çıkarılıyor...")
+        
+        patterns = []
+        # Sembol dizisi üzerinde pencereyi 1 birim kaydırarak örüntüleri oluştur
+        for i in range(len(sax_symbols) - window_size + 1):
+            pattern = "".join(sax_symbols[i:i + window_size])
+            patterns.append(pattern)
+            
+        print(f"[Automata] Toplam {len(patterns)} adet örüntü dizisi çıkarıldı.")
+        return patterns
