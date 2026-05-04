@@ -60,3 +60,48 @@ class ProbabilisticAutomata:
             }
         print(f"[Automata] Transition Modeli Tamamlandı. Toplam benzersiz durum (State) sayısı: {len(self.transition_probabilities)}")
         return self.transition_probabilities
+    def calculate_levenshtein_distance(self, s1, s2):
+        """
+        İki string (örüntü) arasındaki minimum düzenleme mesafesini 
+        (Ekleme, Silme, Değiştirme) dinamik programlama ile hesaplar.
+        """
+        if len(s1) < len(s2):
+            return self.calculate_levenshtein_distance(s2, s1)
+
+        if len(s2) == 0:
+            return len(s1)
+
+        previous_row = range(len(s2) + 1)
+        for i, c1 in enumerate(s1):
+            current_row = [i + 1]
+            for j, c2 in enumerate(s2):
+                insertions = previous_row[j + 1] + 1
+                deletions = current_row[j] + 1
+                substitutions = previous_row[j] + (c1 != c2)
+                current_row.append(min(insertions, deletions, substitutions))
+            previous_row = current_row
+        
+        return previous_row[-1]
+
+    def handle_unseen_pattern(self, unseen_pattern):
+        """
+        Daha önce görülmemiş bir örüntü geldiğinde, eğitim setinden öğrenilen
+        en yakın (Levenshtein mesafesi en küçük) örüntüyü bulur.
+        """
+        closest_pattern = None
+        min_distance = float('inf')
+
+        # Eğitimde öğrenilen tüm durumları gez
+        for known_pattern in self.transition_probabilities.keys():
+            dist = self.calculate_levenshtein_distance(unseen_pattern, known_pattern)
+            
+            if dist < min_distance:
+                min_distance = dist
+                closest_pattern = known_pattern
+                
+            # Eğer birebir eşleşme (mesafe=0) bulunursa aramayı kes
+            if min_distance == 0:
+                break
+                
+        print(f"[Automata - Unseen] '{unseen_pattern}' -> '{closest_pattern}' ile eşleştirildi (Mesafe: {min_distance})")
+        return closest_pattern, min_distance
