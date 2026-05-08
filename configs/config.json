@@ -1,13 +1,14 @@
 {
   "project": {
     "group_id": 30,
-    "datasets": ["WADI", "BATADAL"]
+    "datasets": ["SKAB", "BATADAL"]
   },
   "paths": {
     "raw_data": "data/raw/",
     "processed_data": "data/processed/",
     "logs": "logs/",
-    "models": "src/models/saved_weights/"
+    "models": "src/models/saved_weights/",
+    "skab_subfolders": ["valve1", "valve2"]
   },
   "data_split": {
     "train": 0.60,
