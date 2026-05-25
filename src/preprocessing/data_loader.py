@@ -54,11 +54,49 @@ class DataLoader:
             print(f"[Uyarı] {file_path} bulunamadı.")
             return None
 
-    def split_data(self, df, dataset_name="BATADAL"):
+    def split_data(self, df, dataset_name):
+        """
+        Veri setine özel kurallarla (BATADAL: Kronolojik, SKAB: GroupKFold) veriyi böler.
+        """
         if df is None: return None, None, None
-        train_ratio = self.config['data_split']['train']
-        val_ratio = self.config['data_split']['validation']
-        total_len = len(df)
-        train_end = int(total_len * train_ratio)
-        val_end = train_end + int(total_len * val_ratio)
-        return df.iloc[:train_end].copy(), df.iloc[train_end:val_end].copy(), df.iloc[val_end:].copy()
+        
+        print(f"\n[DataLoader] {dataset_name} için veri bölme işlemi (Split) başlatılıyor...")
+
+        if dataset_name == "BATADAL":
+            # BATADAL için zorunlu kural: Zaman sırası bozulmadan %60 - %20 - %20
+            train_ratio = self.config['data_split']['train']
+            val_ratio = self.config['data_split']['validation']
+            
+            total_len = len(df)
+            train_end = int(total_len * train_ratio)
+            val_end = train_end + int(total_len * val_ratio)
+            
+            train_df = df.iloc[:train_end].copy()
+            val_df = df.iloc[train_end:val_end].copy()
+            test_df = df.iloc[val_end:].copy()
+            
+            print(f"[DataLoader - BATADAL] Kronolojik Split -> Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}")
+            return train_df, val_df, test_df
+
+        elif dataset_name == "SKAB":
+            # SKAB için zorunlu kural: Aynı .csv dosyası hem train hem testte olamaz! (GroupKFold mantığı)
+            # Şimdilik ana pipeline için dosyaların %60'ını Train, %20'sini Val, %20'sini Test yapacağız.
+            # (Cross-Validation döngüsü test aşamasında ayrıca çağrılacaktır).
+            unique_files = df['source_file'].unique()
+            
+            train_ratio = self.config['data_split']['train']
+            val_ratio = self.config['data_split']['validation']
+            
+            n_train = int(len(unique_files) * train_ratio)
+            n_val = int(len(unique_files) * val_ratio)
+            
+            train_files = unique_files[:n_train]
+            val_files = unique_files[n_train:n_train + n_val]
+            test_files = unique_files[n_train + n_val:]
+            
+            train_df = df[df['source_file'].isin(train_files)].copy()
+            val_df = df[df['source_file'].isin(val_files)].copy()
+            test_df = df[df['source_file'].isin(test_files)].copy()
+            
+            print(f"[DataLoader - SKAB] Dosya Bazlı Split -> Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}")
+            return train_df, val_df, test_df
