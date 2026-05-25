@@ -105,3 +105,28 @@ class ProbabilisticAutomata:
                 
         print(f"[Automata - Unseen] '{unseen_pattern}' -> '{closest_pattern}' ile eşleştirildi (Mesafe: {min_distance})")
         return closest_pattern, min_distance
+    def calculate_path_probability(self, sequence_patterns):
+        """
+        Bir örüntü dizisinin toplam olasılığını (Path Probability), ardışık 
+        geçiş olasılıklarının (transition probabilities) çarpımı ile hesaplar.
+        """
+        if not sequence_patterns or len(sequence_patterns) < 2:
+            return 1.0 # Tek durum varsa geçiş yoktur
+
+        path_prob = 1.0
+        transitions_made = []
+
+        for i in range(len(sequence_patterns) - 1):
+            current_state = sequence_patterns[i]
+            next_state = sequence_patterns[i+1]
+
+            # Eğer eğitimde böyle bir geçiş hiç görülmediyse olasılık 0 (veya çok küçük bir epsilon) olur
+            try:
+                prob = self.transition_probabilities[current_state][next_state]
+            except KeyError:
+                prob = 0.001 # Smoothing (Hiç görülmemiş geçiş)
+                
+            path_prob *= prob
+            transitions_made.append(f"{current_state} -> {next_state}: {prob:.2f}")
+
+        return path_prob, transitions_made
