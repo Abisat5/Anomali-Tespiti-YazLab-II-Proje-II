@@ -105,6 +105,22 @@ class ProbabilisticAutomata:
                 
         print(f"[Automata - Unseen] '{unseen_pattern}' -> '{closest_pattern}' ile eşleştirildi (Mesafe: {min_distance})")
         return closest_pattern, min_distance
+    
+    def evaluate_confidence(self, path_probability, threshold=0.05):
+        """
+        Hesaplanan Path Probability değerine göre otomata kararının 
+        güven skorunu (Confidence Score) ve nihai kararını belirler.
+        """
+        # Eşik değerinin (threshold) altındaysa bu beklenmeyen bir durumdur (Anomali)
+        if path_probability < threshold:
+            decision = "ANOMALY"
+            confidence_level = "Low"
+        else:
+            decision = "NORMAL"
+            confidence_level = "High"
+            
+        return decision, f"{path_probability:.4f} ({confidence_level})"
+    
     def calculate_path_probability(self, sequence_patterns):
         """
         Bir örüntü dizisinin toplam olasılığını (Path Probability), ardışık 
