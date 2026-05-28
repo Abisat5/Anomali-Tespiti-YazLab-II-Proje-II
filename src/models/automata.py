@@ -146,3 +146,19 @@ class ProbabilisticAutomata:
             transitions_made.append(f"{current_state} -> {next_state}: {prob:.2f}")
 
         return path_prob, transitions_made
+    def generate_explanation_json(self, time_step, current_state, incoming_pattern, is_unseen, mapped_state, path_prob, decision):
+        """
+        Proje gereksinimlerinde zorunlu tutulan JSON formatında açıklanabilirlik logu üretir.
+        """
+        explanation = {
+            "time_step": time_step,
+            "state": current_state,
+            "pattern": incoming_pattern,
+            "status": "unseen" if is_unseen else "known",
+            "mapped_to": mapped_state if is_unseen else current_state,
+            "probability": round(path_prob, 4),
+            "decision": decision.lower()
+        }
+        
+        # Bu log daha sonra logger.py aracılığıyla config'de belirtilen yere kaydedilecek
+        return explanation
