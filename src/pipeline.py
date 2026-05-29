@@ -1,3 +1,4 @@
+from src.utils.seed_manager import set_deterministic_seed
 class Pipeline:
     def __init__(self, config):
         
@@ -26,10 +27,22 @@ class Pipeline:
         pass
         
     def run(self):
-        
-        print(f"\n--- {self.group_id}. Grup Pipeline Akışı Başlıyor ---")
-        self.prepare_data()
-        self.run_deep_learning_models()
-        self.run_automata_model()
-        self.run_explainability_module()
-        print("--- Pipeline Akışı Tamamlandı ---\n")
+ 
+        print(f"\n{'='*50}")
+        print(f"--- {self.group_id}. Grup Pipeline Akışı Başlıyor ---")
+        print(f"{'='*50}")
+
+        for seed in self.random_seeds:
+            print(f"\n>>> [Deney Döngüsü] Random Seed: {seed} ile çalıştırılıyor <<<")
+            
+            set_deterministic_seed(seed)
+            
+            self.prepare_data()
+            self.run_deep_learning_models()
+            self.run_automata_model()
+            
+            self.run_experimental_scenarios()
+            
+            self.run_explainability_module()
+
+        print("\n--- Tüm Seed Deneyleri (Pipeline Akışı) Tamamlandı ---\n")
