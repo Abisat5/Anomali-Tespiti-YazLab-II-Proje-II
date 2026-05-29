@@ -162,3 +162,29 @@ class ProbabilisticAutomata:
         
         # Bu log daha sonra logger.py aracılığıyla config'de belirtilen yere kaydedilecek
         return explanation
+    def analyze_counterfactual(self, current_state, original_pattern, alternative_pattern):
+        """
+        [Modülü] Karşıt Durum Analizi (Counterfactual):
+        Modele gelen orijinal örüntü yerine, alternatif bir örüntü gelseydi 
+        kararın nasıl değişeceğini simüle eder.
+        """
+        print(f"\n[Counterfactual Analysis] Orijinal: '{original_pattern}' | Alternatif: '{alternative_pattern}'")
+        
+        # Orijinal pattern için yol olasılığı
+        sequence_original = [current_state, original_pattern]
+        prob_orig, _ = self.calculate_path_probability(sequence_original)
+        decision_orig, conf_orig = self.evaluate_confidence(prob_orig)
+        
+        # Alternatif pattern için yol olasılığı
+        sequence_alt = [current_state, alternative_pattern]
+        prob_alt, _ = self.calculate_path_probability(sequence_alt)
+        decision_alt, conf_alt = self.evaluate_confidence(prob_alt)
+        
+        print(f" -> Orijinal Karar: {decision_orig} (Güven: {conf_orig})")
+        print(f" -> Alternatif Karar: {decision_alt} (Güven: {conf_alt})")
+        
+        return {
+            "original_decision": decision_orig,
+            "alternative_decision": decision_alt,
+            "probability_change": round(prob_alt - prob_orig, 4)
+        }
