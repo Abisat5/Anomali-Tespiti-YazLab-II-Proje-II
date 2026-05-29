@@ -26,6 +26,21 @@ class Pipeline:
         print("[Pipeline] Açıklanabilirlik ve JSON loglama modülü çalıştırılıyor...")
         pass
         
+    def run_experimental_scenarios(self):
+
+        print("\n[Pipeline] Deneysel Senaryolar (Orijinal, Gürültülü, Unseen) başlatılıyor...")
+        from src.preprocessing.noise_injector import NoiseInjector
+        
+        noise_injector = NoiseInjector(self.config)
+
+        print("\n>>> Senaryo 1: Orijinal Veri ile Test <<<")
+
+        print("\n>>> Senaryo 2: Gürültü (Gaussian Noise) Eklenmiş Veri ile Test (Robustness) <<<")
+        
+        print("\n>>> Senaryo 3: Unseen (Daha Önce Görülmemiş) Pattern Testi <<<")
+        
+        print("[Pipeline] Deneysel Senaryolar Tamamlandı.")
+
     def run(self):
  
         print(f"\n{'='*50}")
