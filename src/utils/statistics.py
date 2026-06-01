@@ -27,3 +27,24 @@ class StatisticalAnalyzer:
             aggregated[key] = f"{mean_val:.4f} ± {std_val:.4f}"
             
         return aggregated
+    def run_wilcoxon_test(self, model1_f1_scores, model2_f1_scores):
+        """
+        [Commit 32] İki modelin başarı farklarının istatistiksel olarak anlamlı 
+        olup olmadığını PDF'te istenen Wilcoxon testi ile ölçer.
+        """
+        from scipy.stats import wilcoxon
+        print("\n[StatAnalyzer] Wilcoxon İstatistiksel Anlamlılık Testi Uygulanıyor...")
+        
+        if len(model1_f1_scores) < 5 or len(model2_f1_scores) < 5:
+            print("[Uyarı] Wilcoxon testi için en az 5 (seed) örneklem olmalıdır.")
+            return None, None
+            
+        try:
+            # Wilcoxon signed-rank testi
+            stat, p_value = wilcoxon(model1_f1_scores, model2_f1_scores)
+            significance = "Anlamlı Fark VAR (p < 0.05)" if p_value < 0.05 else "Anlamlı Fark YOK (p >= 0.05)"
+            print(f"Wilcoxon Stat: {stat:.4f}, p-value: {p_value:.4f} -> {significance}")
+            return p_value, significance
+        except Exception as e:
+            print(f"[Hata] Wilcoxon testi uygulanamadı (Değerler tamamen aynı olabilir): {e}")
+            return None, None
