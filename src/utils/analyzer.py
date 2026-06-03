@@ -34,3 +34,38 @@ class ParameterAnalyzer:
             print(f"  -> Window {w_size}: State Sayısı={state_count}, Yoğunluk={transition_density:.3f}")
             
         return results
+    def analyze_alphabet_size(self, original_pc1_data, sax_converter_class):
+        """
+        [Commit 34] Alphabet Size (3, 4, 5, 6) etkilerini analiz eder.
+        Alfabe değiştiğinde SAX sözlüğünün baştan çıkarılması gerekir.
+        """
+        print("\n[ParameterAnalyzer] Alphabet Size (Alfabe Boyutu) duyarlılık analizi başlatıldı...")
+        results = []
+        
+        # Orijinal config'i bozmamak için kopyala
+        temp_config = self.config.copy()
+        
+        for a_size in self.alphabet_sizes:
+            temp_config['automata']['base_params']['alphabet_size'] = a_size
+            
+            # Yeni alfabeye göre SAX dönüştürücü oluştur ve fit et
+            temp_sax = sax_converter_class(temp_config)
+            new_sax_symbols = temp_sax.fit_transform(original_pc1_data)
+            
+            # Patternleri çıkar ve transition modelini kur (sabit window size = 4 ile)
+            patterns = self.automata.extract_patterns(new_sax_symbols, window_size=4)
+            transitions = self.automata.build_transition_model(patterns)
+            
+            state_count = len(transitions)
+            total_transitions = sum([len(v) for v in transitions.values()])
+            transition_density = total_transitions / (state_count + 1e-5)
+            
+            results.append({
+                "Parameter": "Alphabet_Size", 
+                "Value": a_size, 
+                "State_Count": state_count, 
+                "Transition_Density": round(transition_density, 3)
+            })
+            print(f"  -> Alphabet {a_size}: State Sayısı={state_count}, Yoğunluk={transition_density:.3f}")
+            
+        return results
