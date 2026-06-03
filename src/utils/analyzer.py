@@ -68,4 +68,20 @@ class ParameterAnalyzer:
             })
             print(f"  -> Alphabet {a_size}: State Sayısı={state_count}, Yoğunluk={transition_density:.3f}")
             
+    def export_analysis_to_table(self, all_results, filepath="logs/parameter_analysis.csv"):
+        
+        import os
+        print(f"\n[ParameterAnalyzer] Parametre analiz sonuçları dışa aktarılıyor: {filepath}")
+        
+        if not all_results:
+            print("[Uyarı] Dışa aktarılacak analiz sonucu bulunamadı.")
+            return
+            
+        
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            
+        df_results = pd.DataFrame(all_results)
+        df_results.to_csv(filepath, index=False)
+        print("[ParameterAnalyzer] Tablo başarıyla kaydedildi. (Rapor Markdown'ına kopyalanmaya hazır)")
+
         return results
