@@ -101,3 +101,26 @@ class Visualizer:
         plt.savefig(save_path, bbox_inches='tight')
         plt.close()
         print(f"[Visualizer] Grafik kaydedildi: {save_path}")
+    
+    def plot_parameter_sensitivity(self, results_list, param_col, value_col, title):
+        print(f"[Visualizer] Parametre Duyarlılık Grafiği oluşturuluyor: {title}...")
+        
+        if not results_list:
+            print("[Uyarı] Çizilecek veri bulunamadı.")
+            return
+            
+        results_df = pd.DataFrame(results_list)
+        
+        plt.figure(figsize=(8, 5))
+        sns.lineplot(data=results_df, x=param_col, y=value_col, marker='o', linewidth=2, color='coral')
+        
+        plt.title(title)
+        plt.xlabel(param_col.replace('_', ' '))
+        plt.ylabel(value_col.replace('_', ' '))
+        plt.grid(True, linestyle='--', alpha=0.7)
+        
+        safe_title = title.replace(' ', '_').lower()
+        save_path = os.path.join(self.log_dir, f"sensitivity_{safe_title}.png")
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close()
+        print(f"[Visualizer] Grafik kaydedildi: {save_path}")
