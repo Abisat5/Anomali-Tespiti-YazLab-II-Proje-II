@@ -52,3 +52,23 @@ class Visualizer:
             print(f"[Visualizer] Grafik kaydedildi: {save_path}")
         except Exception as e:
             print(f"[Hata] ROC eğrisi çizilemedi (Skorlar eksik veya hatalı olabilir): {e}")
+    
+    def plot_transition_heatmap(self, transition_probs, top_n=20):
+        print(f"[Visualizer] Automata Transition Heatmap oluşturuluyor (Top {top_n} durum)...")
+
+        df_trans = pd.DataFrame(transition_probs).fillna(0)
+        
+        if len(df_trans) > top_n:
+            top_states = df_trans.sum(axis=1).sort_values(ascending=False).head(top_n).index
+            df_trans = df_trans.loc[top_states, top_states].fillna(0)
+            
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(df_trans, cmap='YlGnBu', annot=False, cbar_kws={'label': 'Geçiş Olasılığı'})
+        plt.title('Olasılıksal Otomata - Transition Probability Heatmap')
+        plt.xlabel('Sonraki Durum (Next State)')
+        plt.ylabel('Mevcut Durum (Current State)')
+        
+        save_path = os.path.join(self.log_dir, "automata_transition_heatmap.png")
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close()
+        print(f"[Visualizer] Grafik kaydedildi: {save_path}")
