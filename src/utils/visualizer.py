@@ -72,3 +72,32 @@ class Visualizer:
         plt.savefig(save_path, bbox_inches='tight')
         plt.close()
         print(f"[Visualizer] Grafik kaydedildi: {save_path}")
+    
+    def plot_state_diagram(self, transition_probs, threshold=0.1):
+        import networkx as nx
+        print(f"[Visualizer] Automata State Diagram oluşturuluyor (Threshold: {threshold})...")
+        
+        G = nx.DiGraph()
+        
+        for current_state, transitions in transition_probs.items():
+            for next_state, prob in transitions.items():
+                if prob >= threshold:  
+                    G.add_edge(current_state, next_state, weight=prob)
+                    
+        plt.figure(figsize=(12, 10))
+        pos = nx.spring_layout(G, k=0.5, seed=42) 
+        
+        nx.draw_networkx_nodes(G, pos, node_size=2000, node_color='lightblue', alpha=0.8)
+        nx.draw_networkx_labels(G, pos, font_size=10, font_weight='bold')
+        nx.draw_networkx_edges(G, pos, edge_color='gray', arrows=True, arrowsize=20, width=1.5)
+        
+        edge_labels = {(u, v): f"{d['weight']:.2f}" for u, v, d in G.edges(data=True)}
+        nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8)
+        
+        plt.title(f'Automata State Diagram (Güçlü Geçişler >= {threshold})')
+        plt.axis('off')
+        
+        save_path = os.path.join(self.log_dir, "automata_state_diagram.png")
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close()
+        print(f"[Visualizer] Grafik kaydedildi: {save_path}")
