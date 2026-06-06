@@ -15,12 +15,13 @@
       "valve1",
       "valve2"
     ],
-    "batadal_file": "batadal.csv"
+    "batadal_file": "BATADAL_dataset04.csv"
   },
   "data_split": {
     "train": 0.6,
     "validation": 0.2,
-    "test": 0.2
+    "test": 0.2,
+    "fold_train_ratio": 0.75
   },
   "experiment_settings": {
     "random_seeds": [
@@ -31,6 +32,7 @@
       999
     ],
     "skab_cv_folds": 5,
+    "cv_random_state": 42,
     "noise_injection": {
       "type": "gaussian",
       "mean": 0.0,
@@ -50,7 +52,9 @@
       "window_size": 4,
       "alphabet_size": 3,
       "paa_segment_size": 1,
-      "path_probability_threshold": 0.05
+      "path_probability_threshold": 0.05,
+      "smoothing_alpha": 1.0,
+      "unknown_transition_prob": 0.001
     },
     "variation_params": {
       "window_sizes": [
@@ -65,11 +69,17 @@
         5,
         6
       ]
+    },
+    "visualization": {
+      "state_diagram_threshold": 0.1,
+      "heatmap_top_n": 20
     }
   },
   "explainability": {
     "output_format": "json",
-    "max_logged_decisions": 50
+    "max_logged_decisions": 50,
+    "export_json": "logs/explainability_report.json",
+    "export_csv": "logs/explainability_report.csv"
   },
   "quick_test": {
     "enabled": false,

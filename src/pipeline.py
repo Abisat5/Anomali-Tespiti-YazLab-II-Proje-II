@@ -21,6 +21,7 @@ from src.utils.visualizer import Visualizer
 
 class Pipeline:
     SCENARIOS = ("original", "noisy", "unseen")
+    MODELS = ("LSTM", "CNN1D", "Automata")
 
     def __init__(self, config):
         self.config = config
@@ -45,11 +46,16 @@ class Pipeline:
         self.stat_analyzer = StatisticalAnalyzer()
         self.logger = ExperimentLogger(config)
 
-        self.seed_metrics = {model: [] for model in ("LSTM", "CNN1D", "Automata")}
-        self.skab_fold_metrics = {model: {s: [] for s in self.SCENARIOS} for model in ("LSTM", "CNN1D", "Automata")}
-        self.scenario_metrics = {dataset: {s: [] for s in self.SCENARIOS} for dataset in self.datasets}
-        self._parameter_context = None
-        self._last_batadal_predictions = {}
+        self.skab_seed_metrics = {model: [] for model in self.MODELS}
+        self.batadal_seed_metrics = {model: [] for model in self.MODELS}
+        self.skab_fold_metrics = {
+            model: {s: [] for s in self.SCENARIOS} for model in self.MODELS
+        }
+        self.scenario_metrics = {
+            dataset: {s: [] for s in self.SCENARIOS} for dataset in self.datasets
+        }
+        self._parameter_contexts = {}
+        self._batadal_predictions_by_seed = {}
 
     def run(self):
         print(f"\n{'=' * 50}")
@@ -97,16 +103,23 @@ class Pipeline:
         for seed in self.random_seeds:
             print(f"\n>>> [SKAB] Seed {seed} <<<")
             set_deterministic_seed(seed)
-            seed_fold_f1 = {model: [] for model in ("LSTM", "CNN1D", "Automata")}
+            seed_fold_f1 = {model: [] for model in self.MODELS}
 
             for fold_data in folds:
                 fold_idx = fold_data["fold"]
                 context = self._build_context(
-                    "SKAB", seed, fold_idx,
-                    fold_data["train"], fold_data["val"], fold_data["test"],
-                    feature_cols, label_col,
+                    "SKAB",
+                    seed,
+                    fold_idx,
+                    fold_data["train"],
+                    fold_data["val"],
+                    fold_data["test"],
+                    feature_cols,
+                    label_col,
                 )
-                self._parameter_context = context
+                if "SKAB" not in self._parameter_contexts:
+                    self._parameter_contexts["SKAB"] = context
+
                 fold_results = self._run_fold_scenarios(context)
 
                 for model in seed_fold_f1:
@@ -114,13 +127,11 @@ class Pipeline:
 
             for model, scores in seed_fold_f1.items():
                 if scores:
-                    self.seed_metrics[model].append(float(np.mean(scores)))
-
-            for model, scores in seed_fold_f1.items():
-                self.logger.log_aggregated_metrics(
-                    f"SKAB_seed_{seed}_{model}_fold_mean_f1",
-                    self.stat_analyzer.calculate_numeric_mean_std(scores),
-                )
+                    self.skab_seed_metrics[model].append(float(np.mean(scores)))
+                    self.logger.log_aggregated_metrics(
+                        f"SKAB_seed_{seed}_{model}_fold_mean_f1",
+                        self.stat_analyzer.calculate_numeric_mean_std(scores),
+                    )
 
     def _run_batadal_chronological(self, df, feature_cols, label_col):
         for seed in self.random_seeds:
@@ -129,11 +140,19 @@ class Pipeline:
 
             train_df, val_df, test_df = self.data_loader.split_data(df, "BATADAL")
             context = self._build_context(
-                "BATADAL", seed, None,
-                train_df, val_df, test_df,
-                feature_cols, label_col,
+                "BATADAL",
+                seed,
+                None,
+                train_df,
+                val_df,
+                test_df,
+                feature_cols,
+                label_col,
             )
-            self._parameter_context = context
+            if "BATADAL" not in self._parameter_contexts:
+                self._parameter_contexts["BATADAL"] = context
+
+            self._batadal_predictions_by_seed[seed] = {}
             self._run_fold_scenarios(context)
 
     def _build_context(self, dataset_name, seed, fold_idx, train_df, val_df, test_df, feature_cols, label_col):
@@ -182,7 +201,7 @@ class Pipeline:
         }
 
     def _run_fold_scenarios(self, context):
-        scenario_results = {model: {} for model in ("LSTM", "CNN1D", "Automata")}
+        scenario_results = {model: {} for model in self.MODELS}
 
         for scenario in self.SCENARIOS:
             print(
@@ -192,8 +211,11 @@ class Pipeline:
 
             train_df, val_df, test_df = self._apply_scenario_to_frames(context, scenario)
             processed = self._preprocess_frames(
-                train_df, val_df, test_df,
-                context["feature_cols"], context["label_col"],
+                train_df,
+                val_df,
+                test_df,
+                context["feature_cols"],
+                context["label_col"],
             )
 
             if scenario == "unseen":
@@ -227,7 +249,6 @@ class Pipeline:
     def _run_deep_learning(self, context, scenario, processed):
         results = {}
         dataset_name = context["dataset_name"]
-        fold_idx = context["fold_idx"]
 
         train_x = processed["train_scaled"][processed["feature_cols"]].values
         val_x = processed["val_scaled"][processed["feature_cols"]].values
@@ -260,9 +281,13 @@ class Pipeline:
             safe_key = metric_key.replace(" ", "_")
             self.visualizer.plot_confusion_matrix(y_test, y_pred, safe_key)
             self.visualizer.plot_roc_curve(y_test, scores, safe_key)
+            self.visualizer.plot_pr_curve(y_test, scores, safe_key)
 
             if dataset_name == "BATADAL" and scenario == "original":
-                self._last_batadal_predictions[model_name] = (y_test.copy(), y_pred.copy())
+                self._batadal_predictions_by_seed[context["seed"]][model_name] = (
+                    y_test.copy(),
+                    y_pred.copy(),
+                )
                 self.logger.log_batadal_test_result(context["seed"], scenario, model_name, metrics)
 
             results[model_name] = metrics
@@ -277,7 +302,7 @@ class Pipeline:
         automata = ProbabilisticAutomata(self.config, sax_converter)
         automata.fit(processed["train_pc1"])
 
-        y_true, y_pred, explanations, unseen_stats = automata.predict_from_pc1(
+        y_true, y_pred, scores, explanations, unseen_stats = automata.predict_from_pc1(
             processed["test_pc1"],
             processed["test_labels"],
             use_unseen_mapping=True,
@@ -294,10 +319,18 @@ class Pipeline:
 
         safe_key = metric_key.replace(" ", "_")
         self.visualizer.plot_confusion_matrix(y_true, y_pred, safe_key)
+        if len(y_true) > 0 and len(np.unique(y_true)) > 1:
+            self.visualizer.plot_roc_curve(y_true, scores, safe_key)
+            self.visualizer.plot_pr_curve(y_true, scores, safe_key)
 
+        viz_suffix = f"_{context['dataset_name']}_seed{context['seed']}"
         if scenario == "original":
-            self.visualizer.plot_transition_heatmap(automata.transition_probabilities)
-            self.visualizer.plot_state_diagram(automata.transition_probabilities)
+            self.visualizer.plot_transition_heatmap(
+                automata.transition_probabilities, suffix=viz_suffix
+            )
+            self.visualizer.plot_state_diagram(
+                automata.transition_probabilities, suffix=viz_suffix
+            )
 
         if scenario == "unseen" and explanations:
             sample = next((e for e in explanations if e["status"] == "unseen"), explanations[0])
@@ -306,7 +339,10 @@ class Pipeline:
         if context["dataset_name"] == "BATADAL":
             self.logger.log_batadal_test_result(context["seed"], scenario, "Automata", metrics)
             if scenario == "original" and len(y_true) > 0:
-                self._last_batadal_predictions["Automata"] = (y_true.copy(), y_pred.copy())
+                self._batadal_predictions_by_seed[context["seed"]]["Automata"] = (
+                    y_true.copy(),
+                    y_pred.copy(),
+                )
 
         print(f"[Pipeline] Automata/{scenario}: {metrics} | unseen={unseen_stats}")
         return metrics, unseen_stats
@@ -319,7 +355,7 @@ class Pipeline:
             self.logger.log_fold_metrics(dataset_name, fold_idx, model_name, scenario, metrics)
             self.skab_fold_metrics[model_name][scenario].append(metrics["F1_Score"])
         elif dataset_name == "BATADAL" and scenario == "original":
-            self.seed_metrics[model_name].append(metrics["F1_Score"])
+            self.batadal_seed_metrics[model_name].append(metrics["F1_Score"])
 
     def _metric_key(self, context, model_name, scenario):
         parts = [context["dataset_name"], f"seed_{context['seed']}"]
@@ -341,13 +377,19 @@ class Pipeline:
     def _run_statistical_analysis(self):
         print("\n[Pipeline] İstatistiksel analiz başlatılıyor...")
 
-        for model_name, scores in self.seed_metrics.items():
-            if not scores:
-                continue
-            agg = self.stat_analyzer.calculate_mean_and_std(
-                [{"F1_Score": s} for s in scores]
-            )
-            self.logger.log_aggregated_metrics(f"{model_name}_seed_f1_summary", agg)
+        for dataset_prefix, seed_metrics in (
+            ("SKAB", self.skab_seed_metrics),
+            ("BATADAL", self.batadal_seed_metrics),
+        ):
+            for model_name, scores in seed_metrics.items():
+                if not scores:
+                    continue
+                agg = self.stat_analyzer.calculate_mean_and_std(
+                    [{"F1_Score": s} for s in scores]
+                )
+                key = f"{dataset_prefix}_{model_name}_seed_f1_summary"
+                self.logger.log_aggregated_metrics(key, agg)
+                print(f"[Pipeline] {key}: {agg}")
 
         for model_name, scenario_dict in self.skab_fold_metrics.items():
             for scenario, scores in scenario_dict.items():
@@ -358,84 +400,119 @@ class Pipeline:
                 self.logger.log_aggregated_metrics(key, agg)
                 print(f"[Pipeline] {key}: {agg}")
 
-        comparisons = [
-            ("LSTM", "CNN1D", self.seed_metrics["LSTM"], self.seed_metrics["CNN1D"]),
-            ("LSTM", "Automata", self.seed_metrics["LSTM"], self.seed_metrics["Automata"]),
-            ("CNN1D", "Automata", self.seed_metrics["CNN1D"], self.seed_metrics["Automata"]),
+        for dataset_prefix, seed_metrics in (
+            ("SKAB", self.skab_seed_metrics),
+            ("BATADAL", self.batadal_seed_metrics),
+        ):
+            comparisons = [
+                ("LSTM", "CNN1D"),
+                ("LSTM", "Automata"),
+                ("CNN1D", "Automata"),
+            ]
+            for name_a, name_b in comparisons:
+                scores_a = seed_metrics[name_a]
+                scores_b = seed_metrics[name_b]
+                if len(scores_a) >= 2 and len(scores_b) >= 2:
+                    result = self.stat_analyzer.run_wilcoxon_test(
+                        scores_a,
+                        scores_b,
+                        label=f"{dataset_prefix}_{name_a}_vs_{name_b}",
+                    )
+                    self.logger.log_statistical_test(result)
+
+        mcnemar_pairs = [
+            ("LSTM", "CNN1D"),
+            ("LSTM", "Automata"),
+            ("CNN1D", "Automata"),
         ]
-        for name_a, name_b, scores_a, scores_b in comparisons:
-            if len(scores_a) >= 2 and len(scores_b) >= 2:
-                result = self.stat_analyzer.run_wilcoxon_test(
-                    scores_a, scores_b, label=f"{name_a}_vs_{name_b}"
-                )
-                self.logger.log_statistical_test(result)
-
-        preds = self._last_batadal_predictions
-        if all(k in preds for k in ("LSTM", "CNN1D")):
-            y_true, y_pred_lstm = preds["LSTM"]
-            _, y_pred_cnn = preds["CNN1D"]
-            result = self.stat_analyzer.run_mcnemar_test(
-                y_true, y_pred_lstm, y_pred_cnn, label="BATADAL_LSTM_vs_CNN1D"
-            )
-            self.logger.log_statistical_test(result)
-
-        if all(k in preds for k in ("LSTM", "Automata")):
-            y_true, y_pred_lstm = preds["LSTM"]
-            _, y_pred_auto = preds["Automata"]
-            result = self.stat_analyzer.run_mcnemar_test(
-                y_true, y_pred_lstm, y_pred_auto, label="BATADAL_LSTM_vs_Automata"
-            )
-            self.logger.log_statistical_test(result)
+        for seed, preds in self._batadal_predictions_by_seed.items():
+            for name_a, name_b in mcnemar_pairs:
+                if name_a in preds and name_b in preds:
+                    y_true, y_pred_a = preds[name_a]
+                    _, y_pred_b = preds[name_b]
+                    result = self.stat_analyzer.run_mcnemar_test(
+                        y_true,
+                        y_pred_a,
+                        y_pred_b,
+                        label=f"BATADAL_seed_{seed}_{name_a}_vs_{name_b}",
+                    )
+                    self.logger.log_statistical_test(result)
 
     def _run_parameter_analysis(self):
-        if self._parameter_context is None:
+        if not self._parameter_contexts:
             print("[Pipeline] Parametre analizi atlanıyor (bağlam yok).")
             return
 
-        print("\n[Pipeline] Parametre duyarlılık analizi...")
-        context = self._parameter_context
-        train_df, val_df, test_df = self._apply_scenario_to_frames(context, "original")
-        processed = self._preprocess_frames(
-            train_df, val_df, test_df,
-            context["feature_cols"], context["label_col"],
-        )
+        all_results = []
 
-        sax_converter = SAXConverter(self.config)
-        sax_symbols = sax_converter.fit_transform(processed["train_pc1"])
-        automata = ProbabilisticAutomata(self.config, sax_converter)
+        for dataset_name, context in self._parameter_contexts.items():
+            print(f"\n[Pipeline] Parametre duyarlılık analizi: {dataset_name}")
+            train_df, val_df, test_df = self._apply_scenario_to_frames(context, "original")
+            processed = self._preprocess_frames(
+                train_df,
+                val_df,
+                test_df,
+                context["feature_cols"],
+                context["label_col"],
+            )
 
-        param_analyzer = ParameterAnalyzer(self.config, automata)
-        window_results = param_analyzer.analyze_window_size(
-            processed["train_pc1"],
-            processed["test_pc1"],
-            processed["test_labels"],
-            sax_converter,
-        )
-        alphabet_results = param_analyzer.analyze_alphabet_size(
-            processed["train_pc1"],
-            processed["test_pc1"],
-            processed["test_labels"],
-            SAXConverter,
-        )
+            sax_converter = SAXConverter(self.config)
+            sax_converter.fit_transform(processed["train_pc1"])
+            automata = ProbabilisticAutomata(self.config, sax_converter)
+            suffix = f"_{dataset_name.lower()}"
 
-        all_results = window_results + alphabet_results
+            param_analyzer = ParameterAnalyzer(self.config, automata)
+            window_results = param_analyzer.analyze_window_size(
+                processed["train_pc1"],
+                processed["test_pc1"],
+                processed["test_labels"],
+                sax_converter,
+            )
+            alphabet_results = param_analyzer.analyze_alphabet_size(
+                processed["train_pc1"],
+                processed["test_pc1"],
+                processed["test_labels"],
+                SAXConverter,
+            )
+
+            for row in window_results + alphabet_results:
+                row["Dataset"] = dataset_name
+            all_results.extend(window_results + alphabet_results)
+
+            param_analyzer.export_analysis_to_table(
+                window_results + alphabet_results,
+                filepath=f"logs/parameter_analysis_{dataset_name.lower()}.csv",
+            )
+
+            self.visualizer.plot_parameter_sensitivity(
+                window_results, "Value", "State_Count",
+                f"{dataset_name} Window Size vs State Count", suffix=suffix,
+            )
+            self.visualizer.plot_parameter_sensitivity(
+                window_results, "Value", "F1_Score",
+                f"{dataset_name} Window Size vs F1 Score", suffix=suffix,
+            )
+            self.visualizer.plot_parameter_sensitivity(
+                window_results, "Value", "Transition_Density",
+                f"{dataset_name} Window Size vs Transition Density", suffix=suffix,
+            )
+            self.visualizer.plot_parameter_sensitivity(
+                alphabet_results, "Value", "State_Count",
+                f"{dataset_name} Alphabet Size vs State Count", suffix=suffix,
+            )
+            self.visualizer.plot_parameter_sensitivity(
+                alphabet_results, "Value", "F1_Score",
+                f"{dataset_name} Alphabet Size vs F1 Score", suffix=suffix,
+            )
+            self.visualizer.plot_parameter_sensitivity(
+                alphabet_results, "Value", "Transition_Density",
+                f"{dataset_name} Alphabet Size vs Transition Density", suffix=suffix,
+            )
+
         self.logger.log_parameter_analysis(all_results)
-        param_analyzer.export_analysis_to_table(all_results)
-
-        self.visualizer.plot_parameter_sensitivity(
-            window_results, "Value", "State_Count", "Window Size vs State Count"
-        )
-        self.visualizer.plot_parameter_sensitivity(
-            window_results, "Value", "F1_Score", "Window Size vs F1 Score"
-        )
-        self.visualizer.plot_parameter_sensitivity(
-            alphabet_results, "Value", "State_Count", "Alphabet Size vs State Count"
-        )
-        self.visualizer.plot_parameter_sensitivity(
-            alphabet_results, "Value", "F1_Score", "Alphabet Size vs F1 Score"
-        )
 
     def _save_summary(self):
         self.logger.save()
         self.logger.export_summary_csv()
+        self.logger.export_explainability()
         print(f"\n[Pipeline] Deney logları: {self.logger.log_file}")

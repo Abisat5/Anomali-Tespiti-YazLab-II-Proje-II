@@ -14,6 +14,8 @@ class ProbabilisticAutomata:
         self.window_size = base_params.get("window_size", 4)
         self.paa_segment_size = base_params.get("paa_segment_size", 1)
         self.threshold = base_params.get("path_probability_threshold", 0.05)
+        self.smoothing_alpha = base_params.get("smoothing_alpha", 1.0)
+        self.unknown_transition_prob = base_params.get("unknown_transition_prob", 0.001)
 
     def apply_paa(self, data, segment_size=None):
         segment_size = segment_size or self.paa_segment_size
@@ -52,21 +54,31 @@ class ProbabilisticAutomata:
             current_state = patterns[i]
             next_state = patterns[i + 1]
             transition_counts.setdefault(current_state, {})
-            transition_counts[current_state][next_state] = transition_counts[current_state].get(next_state, 0) + 1
+            transition_counts[current_state][next_state] = (
+                transition_counts[current_state].get(next_state, 0) + 1
+            )
 
+        alpha = self.smoothing_alpha
         self.transition_probabilities = {}
         for current_state, transitions in transition_counts.items():
             total_transitions = sum(transitions.values())
+            num_targets = len(transitions)
             self.transition_probabilities[current_state] = {
-                next_state: float(count / total_transitions)
+                next_state: float((count + alpha) / (total_transitions + alpha * num_targets))
                 for next_state, count in transitions.items()
             }
 
         print(
-            f"[Automata] Transition modeli tamamlandı. "
+            f"[Automata] Transition modeli tamamlandı (smoothing={alpha}). "
             f"Benzersiz state sayısı: {len(self.transition_probabilities)}"
         )
         return self.transition_probabilities
+
+    def get_transition_probability(self, from_state, to_state):
+        try:
+            return self.transition_probabilities[from_state][to_state]
+        except KeyError:
+            return self.unknown_transition_prob
 
     def fit(self, train_pc1, window_size=None):
         self.window_size = window_size or self.config["automata"]["base_params"]["window_size"]
@@ -127,8 +139,8 @@ class ProbabilisticAutomata:
     def evaluate_confidence(self, path_probability, threshold=None):
         threshold = threshold or self.threshold
         if path_probability < threshold:
-            return "ANOMALY", f"{path_probability:.4f} (Low)"
-        return "NORMAL", f"{path_probability:.4f} (High)"
+            return "ANOMALY", path_probability
+        return "NORMAL", path_probability
 
     def calculate_path_probability(self, sequence_patterns):
         if not sequence_patterns or len(sequence_patterns) < 2:
@@ -140,11 +152,7 @@ class ProbabilisticAutomata:
         for i in range(len(sequence_patterns) - 1):
             current_state = sequence_patterns[i]
             next_state = sequence_patterns[i + 1]
-
-            try:
-                prob = self.transition_probabilities[current_state][next_state]
-            except KeyError:
-                prob = 0.001
+            prob = self.get_transition_probability(current_state, next_state)
 
             path_prob *= prob
             transitions_made.append(
@@ -159,11 +167,18 @@ class ProbabilisticAutomata:
         patterns = self.extract_patterns(sax_symbols, self.window_size)
 
         if len(patterns) < 2:
-            return np.array([]), np.array([]), [], {"unseen_count": 0, "total_patterns": 0}
+            return (
+                np.array([]),
+                np.array([]),
+                np.array([]),
+                [],
+                {"unseen_count": 0, "total_patterns": 0},
+            )
 
         label_offset = self.window_size - 1
         y_true = []
         y_pred = []
+        anomaly_scores = []
         explanations = []
         unseen_count = 0
 
@@ -184,6 +199,7 @@ class ProbabilisticAutomata:
             label_index = min(idx + label_offset, len(labels) - 1)
             y_true.append(int(labels[label_index]))
             y_pred.append(1 if decision == "ANOMALY" else 0)
+            anomaly_scores.append(1.0 - path_prob)
 
             explanations.append(
                 self.generate_explanation_json(
@@ -205,7 +221,13 @@ class ProbabilisticAutomata:
             "total_patterns": len(patterns),
             "unseen_ratio": round(unseen_count / max(len(patterns), 1), 4),
         }
-        return np.array(y_true), np.array(y_pred), explanations, unseen_stats
+        return (
+            np.array(y_true),
+            np.array(y_pred),
+            np.array(anomaly_scores),
+            explanations,
+            unseen_stats,
+        )
 
     def evaluate_metrics(self, y_true, y_pred):
         if len(y_true) == 0:
@@ -236,6 +258,7 @@ class ProbabilisticAutomata:
         distance=0,
         confidence=None,
     ):
+        confidence_label = "low" if decision == "ANOMALY" else "high"
         return {
             "time_step": time_step,
             "state": current_state,
@@ -245,7 +268,8 @@ class ProbabilisticAutomata:
             "distance": distance,
             "transitions": transitions or [],
             "probability": round(path_prob, 4),
-            "confidence": confidence,
+            "confidence": round(float(confidence), 4) if confidence is not None else None,
+            "confidence_label": confidence_label,
             "decision": decision.lower(),
         }
 

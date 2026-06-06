@@ -86,3 +86,27 @@ class ExperimentLogger:
         df.to_csv(filepath, index=False)
         print(f"[Logger] Özet tablo kaydedildi: {filepath}")
         return df
+
+    def export_explainability(self):
+        explain_cfg = self.config.get("explainability", {})
+        rows = self.results["explainability"]
+        if not rows:
+            print("[Logger] Explainability kaydı bulunamadı, export atlandı.")
+            return
+
+        json_path = explain_cfg.get("export_json", "logs/explainability_report.json")
+        csv_path = explain_cfg.get("export_csv", "logs/explainability_report.csv")
+
+        os.makedirs(os.path.dirname(json_path), exist_ok=True)
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(rows, f, indent=4, ensure_ascii=False)
+        print(f"[Logger] Explainability JSON kaydedildi: {json_path}")
+
+        import pandas as pd
+
+        flat_rows = []
+        for row in rows:
+            flat = {k: v for k, v in row.items() if k != "transitions"}
+            flat_rows.append(flat)
+        pd.DataFrame(flat_rows).to_csv(csv_path, index=False)
+        print(f"[Logger] Explainability CSV kaydedildi: {csv_path}")

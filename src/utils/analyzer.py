@@ -18,7 +18,7 @@ class ParameterAnalyzer:
     def _evaluate_automata_performance(self, train_pc1, test_pc1, test_labels, window_size, sax_converter):
         automata = ProbabilisticAutomata(self.config, sax_converter)
         automata.fit(train_pc1, window_size=window_size)
-        y_true, y_pred, _, _ = automata.predict_from_pc1(test_pc1, test_labels)
+        y_true, y_pred, _, _, _ = automata.predict_from_pc1(test_pc1, test_labels)
         return automata.evaluate_metrics(y_true, y_pred)
 
     def analyze_window_size(self, train_pc1, test_pc1, test_labels, sax_converter):

@@ -13,9 +13,29 @@ class DataLoader:
 
     def __init__(self, config):
         self.config = config
-        self.raw_path = config["paths"]["raw_data"]
+        self.raw_path = self._resolve_path(config["paths"]["raw_data"])
         self.datasets = config["project"]["datasets"]
         self.skab_folders = config["paths"].get("skab_subfolders", ["valve1", "valve2"])
+
+    @staticmethod
+    def _resolve_path(path):
+        if os.path.isabs(path):
+            return path
+        project_root = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+        return os.path.normpath(os.path.join(project_root, path))
+
+    @staticmethod
+    def _read_csv(file_path):
+        for sep in (";", ","):
+            try:
+                df = pd.read_csv(file_path, sep=sep)
+                if len(df.columns) > 1:
+                    return df
+            except Exception:
+                continue
+        return pd.read_csv(file_path)
 
     def load_data(self, dataset_name):
         if dataset_name not in self.datasets:
@@ -41,47 +61,124 @@ class DataLoader:
                 )
                 continue
 
-            csv_files = glob.glob(os.path.join(folder_path, "*.csv"))
+            csv_files = sorted(glob.glob(os.path.join(folder_path, "*.csv")))
+            if not csv_files:
+                print(f"[Uyarı] {folder_path} içinde .csv dosyası yok.")
+                continue
+
             for file_path in csv_files:
-                df = pd.read_csv(file_path, sep=";")
+                df = self._read_csv(file_path)
                 df["source_group"] = folder
                 df["source_file"] = os.path.basename(file_path)
                 all_data.append(df)
+                print(f"[DataLoader] SKAB dosyası yüklendi: {folder}/{os.path.basename(file_path)}")
 
         if not all_data:
+            self._print_skab_setup_hint()
             return None
 
         combined_df = pd.concat(all_data, ignore_index=True)
-        print(f"[DataLoader] SKAB başarıyla birleştirildi. Toplam Boyut: {combined_df.shape}")
+        file_count = combined_df["source_file"].nunique()
+        print(
+            f"[DataLoader] SKAB birleştirildi. "
+            f"Boyut: {combined_df.shape}, dosya sayısı: {file_count}"
+        )
         return combined_df
 
-    def _load_batadal(self):
+    def _print_skab_setup_hint(self):
+        print("[Hata] SKAB verisi bulunamadı.")
+        print("Beklenen yapı:")
+        for folder in self.skab_folders:
+            print(f"  {os.path.join(self.raw_path, 'SKAB', folder)}/*.csv")
+        print("Hızlı test için: python scripts/generate_sample_data.py")
+
+    def _batadal_search_paths(self):
         configured = self.config["paths"].get("batadal_file", "batadal.csv")
-        candidates = [
+        file_names = [
             configured,
-            "batadal.csv",
             "Training Dataset 2.csv",
             "Training_Dataset_2.csv",
             "training_dataset_2.csv",
+            "BATADAL_dataset03.csv",
+            "BATADAL_dataset04.csv",
+            "batadal.csv",
         ]
         seen = set()
-        for file_name in candidates:
-            if file_name in seen:
-                continue
-            seen.add(file_name)
-            file_path = os.path.join(self.raw_path, file_name)
-            if os.path.exists(file_path):
-                df = pd.read_csv(file_path)
-                print(
-                    f"[DataLoader] BATADAL yüklendi ({file_name}). "
-                    f"Boyut: {df.shape} [Training Dataset 2 bekleniyor]"
-                )
-                return df
+        search_dirs = [
+            self.raw_path,
+            os.path.join(self.raw_path, "BATADAL"),
+        ]
+        paths = []
+        for directory in search_dirs:
+            for file_name in file_names:
+                key = (directory, file_name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                paths.append(os.path.join(directory, file_name))
+        return paths
 
+    def _normalize_batadal_labels(self, df, label_col):
+        """Training Dataset 2 kismi etiketli: -999 = etiketsiz/normal kabul edilir."""
+        normalized = df.copy()
+        normalized[label_col] = normalized[label_col].replace(-999, 0)
+        normalized[label_col] = normalized[label_col].astype(int)
+
+        counts = normalized[label_col].value_counts().to_dict()
         print(
-            "[Uyarı] BATADAL dosyası bulunamadı. "
-            f"Şu yollardan birine Training Dataset 2 koyun: {self.raw_path}"
+            f"[DataLoader] BATADAL etiketleri normalize edildi (-999 -> 0). "
+            f"Dagilim: {counts}"
         )
+        return normalized
+
+    def _validate_batadal_df(self, df, file_path):
+        label_col = self.detect_label_column(df, "BATADAL")
+        labels = set(df[label_col].dropna().unique())
+        row_count = len(df)
+        file_name = os.path.basename(file_path)
+
+        if "ATT_FLAG" not in df.columns.str.strip().tolist() and label_col.lower() != "att_flag":
+            print(f"[Hata] {file_name} etiket sutunu yok; bu Test Dataset olabilir.")
+            return False
+
+        if labels == {-999} or labels == {-999, 1} or -999 in labels:
+            print(
+                f"[DataLoader] {file_name} kismi etiketli Training Dataset 2 formatinda "
+                f"(-999 + 1). Bu resmi indirmede normaldir."
+            )
+
+        if 1 not in labels:
+            print(
+                f"[Hata] {file_name} saldiri etiketi (1) icermiyor. "
+                "Training Dataset 1 veya yanlis dosya olabilir."
+            )
+            return False
+
+        if row_count < 2000:
+            print(f"[Uyari] {file_name} satir sayisi beklenenden az ({row_count}).")
+        return True
+
+    def _load_batadal(self):
+        for file_path in self._batadal_search_paths():
+            if not os.path.exists(file_path):
+                continue
+            df = self._read_csv(file_path)
+            df.columns = df.columns.str.strip()
+            print(
+                f"[DataLoader] BATADAL yüklendi: {file_path} "
+                f"(Boyut: {df.shape})"
+            )
+            if not self._validate_batadal_df(df, file_path):
+                continue
+            label_col = self.detect_label_column(df, "BATADAL")
+            df = self._normalize_batadal_labels(df, label_col)
+            return df
+
+        print("[Hata] BATADAL dosyası bulunamadı.")
+        print("Beklenen konumlar (Training Dataset 2):")
+        for file_path in self._batadal_search_paths():
+            print(f"  {file_path}")
+        print("Hızlı test için: python scripts/generate_sample_data.py")
         return None
 
     def detect_label_column(self, df, dataset_name):
@@ -190,10 +287,12 @@ class DataLoader:
         n_splits = n_splits or self.config["experiment_settings"].get("skab_cv_folds", 5)
         groups = df["source_file"].values
         y = df[label_col].values
+        cv_seed = self.config["experiment_settings"].get("cv_random_state", 42)
+        fold_train_ratio = self.config["data_split"].get("fold_train_ratio", 0.75)
 
         splitter_cls = StratifiedGroupKFold
         try:
-            splitter = splitter_cls(n_splits=n_splits, shuffle=True, random_state=42)
+            splitter = splitter_cls(n_splits=n_splits, shuffle=True, random_state=cv_seed)
             split_iter = splitter.split(df, y, groups=groups)
         except Exception:
             print("[Uyarı] StratifiedGroupKFold kullanılamadı, GroupKFold'a düşülüyor.")
@@ -206,7 +305,7 @@ class DataLoader:
             test_df = df.iloc[test_idx].copy()
 
             unique_files = np.array(sorted(fold_df["source_file"].unique()))
-            n_train_files = max(1, int(len(unique_files) * 0.75))
+            n_train_files = max(1, int(len(unique_files) * fold_train_ratio))
             train_files = unique_files[:n_train_files]
             val_files = unique_files[n_train_files:]
 
