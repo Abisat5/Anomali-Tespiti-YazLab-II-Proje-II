@@ -13,24 +13,16 @@ class CNN1DAnomalyDetector:
         self.model = self._build_model()
 
     def _build_model(self):
-        """1D-CNN Autoencoder mimarisini oluşturur."""
+        """1D-CNN Autoencoder mimarisini oluşturur (çıktı boyutu = girdi boyutu)."""
         print("[CNN-1D] Model mimarisi inşa ediliyor...")
         model = models.Sequential(name="CNN1D_Autoencoder")
-        
-        # Encoder (Sıkıştırma)
+
         model.add(layers.Input(shape=(self.seq_len, self.n_features)))
         model.add(layers.Conv1D(filters=32, kernel_size=3, padding="same", activation="relu"))
-        model.add(layers.MaxPooling1D(pool_size=2, padding="same"))
         model.add(layers.Conv1D(filters=16, kernel_size=3, padding="same", activation="relu"))
-        model.add(layers.MaxPooling1D(pool_size=2, padding="same"))
-        
-        # Decoder (Yeniden Oluşturma)
-        model.add(layers.UpSampling1D(size=2))
+        model.add(layers.Conv1D(filters=8, kernel_size=3, padding="same", activation="relu"))
         model.add(layers.Conv1D(filters=16, kernel_size=3, padding="same", activation="relu"))
-        model.add(layers.UpSampling1D(size=2))
         model.add(layers.Conv1D(filters=32, kernel_size=3, padding="same", activation="relu"))
-        
-        # Çıktı Katmanı (Orijinal boyuta dönüş)
         model.add(layers.Conv1D(filters=self.n_features, kernel_size=3, padding="same", activation="linear"))
         
         # Optimizasyon ve Derleme

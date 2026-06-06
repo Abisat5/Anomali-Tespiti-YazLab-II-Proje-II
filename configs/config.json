@@ -1,23 +1,35 @@
 {
   "project": {
     "group_id": 30,
-    "datasets": ["SKAB", "BATADAL"]
+    "datasets": [
+      "SKAB",
+      "BATADAL"
+    ]
   },
   "paths": {
     "raw_data": "data/raw/",
     "processed_data": "data/processed/",
     "logs": "logs/",
     "models": "src/models/saved_weights/",
-    "skab_subfolders": ["valve1", "valve2"],
+    "skab_subfolders": [
+      "valve1",
+      "valve2"
+    ],
     "batadal_file": "batadal.csv"
   },
   "data_split": {
-    "train": 0.60,
-    "validation": 0.20,
-    "test": 0.20
+    "train": 0.6,
+    "validation": 0.2,
+    "test": 0.2
   },
   "experiment_settings": {
-    "random_seeds": [42, 123, 2026, 7, 999],
+    "random_seeds": [
+      42,
+      123,
+      2026,
+      7,
+      999
+    ],
     "skab_cv_folds": 5,
     "noise_injection": {
       "type": "gaussian",
@@ -41,12 +53,30 @@
       "path_probability_threshold": 0.05
     },
     "variation_params": {
-      "window_sizes": [3, 4, 5, 6],
-      "alphabet_sizes": [3, 4, 5, 6]
+      "window_sizes": [
+        3,
+        4,
+        5,
+        6
+      ],
+      "alphabet_sizes": [
+        3,
+        4,
+        5,
+        6
+      ]
     }
   },
   "explainability": {
     "output_format": "json",
     "max_logged_decisions": 50
+  },
+  "quick_test": {
+    "enabled": false,
+    "seeds": [
+      42
+    ],
+    "skab_folds": 2,
+    "epochs": 3
   }
 }

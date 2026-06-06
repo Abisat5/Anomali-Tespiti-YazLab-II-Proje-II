@@ -159,18 +159,21 @@ class ProbabilisticAutomata:
         patterns = self.extract_patterns(sax_symbols, self.window_size)
 
         if len(patterns) < 2:
-            return np.array([]), np.array([]), []
+            return np.array([]), np.array([]), [], {"unseen_count": 0, "total_patterns": 0}
 
         label_offset = self.window_size - 1
         y_true = []
         y_pred = []
         explanations = []
+        unseen_count = 0
 
         for idx in range(1, len(patterns)):
             prev_pattern, _, _ = self.resolve_pattern(patterns[idx - 1], use_unseen_mapping)
             current_pattern, is_unseen, distance = self.resolve_pattern(
                 patterns[idx], use_unseen_mapping
             )
+            if is_unseen:
+                unseen_count += 1
 
             mapped_current = current_pattern if is_unseen else patterns[idx]
             path_prob, transitions = self.calculate_path_probability(
@@ -197,7 +200,12 @@ class ProbabilisticAutomata:
                 )
             )
 
-        return np.array(y_true), np.array(y_pred), explanations
+        unseen_stats = {
+            "unseen_count": unseen_count,
+            "total_patterns": len(patterns),
+            "unseen_ratio": round(unseen_count / max(len(patterns), 1), 4),
+        }
+        return np.array(y_true), np.array(y_pred), explanations, unseen_stats
 
     def evaluate_metrics(self, y_true, y_pred):
         if len(y_true) == 0:

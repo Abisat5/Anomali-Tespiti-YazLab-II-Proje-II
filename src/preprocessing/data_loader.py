@@ -56,15 +56,33 @@ class DataLoader:
         return combined_df
 
     def _load_batadal(self):
-        file_name = self.config["paths"].get("batadal_file", "batadal.csv")
-        file_path = os.path.join(self.raw_path, file_name)
-        try:
-            df = pd.read_csv(file_path)
-            print(f"[DataLoader] BATADAL yüklendi ({file_name}). Boyut: {df.shape}")
-            return df
-        except FileNotFoundError:
-            print(f"[Uyarı] {file_path} bulunamadı.")
-            return None
+        configured = self.config["paths"].get("batadal_file", "batadal.csv")
+        candidates = [
+            configured,
+            "batadal.csv",
+            "Training Dataset 2.csv",
+            "Training_Dataset_2.csv",
+            "training_dataset_2.csv",
+        ]
+        seen = set()
+        for file_name in candidates:
+            if file_name in seen:
+                continue
+            seen.add(file_name)
+            file_path = os.path.join(self.raw_path, file_name)
+            if os.path.exists(file_path):
+                df = pd.read_csv(file_path)
+                print(
+                    f"[DataLoader] BATADAL yüklendi ({file_name}). "
+                    f"Boyut: {df.shape} [Training Dataset 2 bekleniyor]"
+                )
+                return df
+
+        print(
+            "[Uyarı] BATADAL dosyası bulunamadı. "
+            f"Şu yollardan birine Training Dataset 2 koyun: {self.raw_path}"
+        )
+        return None
 
     def detect_label_column(self, df, dataset_name):
         lower_map = {col.lower(): col for col in df.columns}
