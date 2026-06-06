@@ -1,20 +1,30 @@
 import numpy as np
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+
 
 class ProbabilisticAutomata:
     def __init__(self, config, sax_converter):
         self.config = config
-        self.window_sizes = config['automata']['variation_params']['window_sizes']
+        automata_cfg = config["automata"]
+        base_params = automata_cfg.get("base_params", {})
+        self.window_sizes = automata_cfg["variation_params"]["window_sizes"]
         self.sax_converter = sax_converter
+        self.transition_probabilities = {}
+        self.train_pattern_set = set()
+        self.window_size = base_params.get("window_size", 4)
+        self.paa_segment_size = base_params.get("paa_segment_size", 1)
+        self.threshold = base_params.get("path_probability_threshold", 0.05)
 
-    def apply_paa(self, data, segment_size):
-        print(f"[Automata] PAA (Sıkıştırma) uygulanıyor... (Segment Boyutu: {segment_size})")
-        
+    def apply_paa(self, data, segment_size=None):
+        segment_size = segment_size or self.paa_segment_size
+        print(f"[Automata] PAA uygulanıyor... (Segment Boyutu: {segment_size})")
+
+        data = np.asarray(data, dtype=float)
         remainder = len(data) % segment_size
-        if remainder != 0:
-            data_trimmed = data[:-remainder]
-        else:
-            data_trimmed = data
-            
+        data_trimmed = data[:-remainder] if remainder else data
+        if len(data_trimmed) == 0:
+            return data_trimmed
+
         paa_data = data_trimmed.reshape(-1, segment_size).mean(axis=1)
         print(f"[Automata] PAA Tamamlandı. (Orijinal: {len(data)}, Sıkıştırılmış: {len(paa_data)})")
         return paa_data
@@ -22,49 +32,62 @@ class ProbabilisticAutomata:
     def apply_sax(self, paa_data):
         print("[Automata] PAA verisi SAX sembollerine dönüştürülüyor...")
         return self.sax_converter.transform(paa_data)
-    
-    def extract_patterns(self, sax_symbols, window_size):
-        """
-        Sliding Window (Kayan Pencere) mantığı ile SAX sembol dizisinden
-        belirli uzunlukta alt örüntüler (kelimeler) çıkarır.
-        """
+
+    def extract_patterns(self, sax_symbols, window_size=None):
+        window_size = window_size or self.window_size
         print(f"[Automata] Sliding Window (Boyut: {window_size}) ile örüntüler çıkarılıyor...")
-        
+
         patterns = []
-        # Sembol dizisi üzerinde pencereyi 1 birim kaydırarak örüntüleri oluştur
         for i in range(len(sax_symbols) - window_size + 1):
-            pattern = "".join(sax_symbols[i:i + window_size])
-            patterns.append(pattern)
-            
-        print(f"[Automata] Toplam {len(patterns)} adet örüntü dizisi çıkarıldı.")
+            patterns.append("".join(sax_symbols[i:i + window_size]))
+
+        print(f"[Automata] Toplam {len(patterns)} adet örüntü çıkarıldı.")
         return patterns
+
     def build_transition_model(self, patterns):
-        print("[Automata] Olasılıksal durum geçiş (Transition) modeli inşa ediliyor...")
+        print("[Automata] Olasılıksal durum geçiş modeli inşa ediliyor...")
         transition_counts = {}
+
         for i in range(len(patterns) - 1):
             current_state = patterns[i]
             next_state = patterns[i + 1]
-            if current_state not in transition_counts:
-                transition_counts[current_state] = {}
-            if next_state not in transition_counts[current_state]:
-                transition_counts[current_state][next_state] = 0
-                
-            transition_counts[current_state][next_state] += 1
+            transition_counts.setdefault(current_state, {})
+            transition_counts[current_state][next_state] = transition_counts[current_state].get(next_state, 0) + 1
+
         self.transition_probabilities = {}
-        
         for current_state, transitions in transition_counts.items():
             total_transitions = sum(transitions.values())
             self.transition_probabilities[current_state] = {
                 next_state: float(count / total_transitions)
                 for next_state, count in transitions.items()
             }
-        print(f"[Automata] Transition Modeli Tamamlandı. Toplam benzersiz durum (State) sayısı: {len(self.transition_probabilities)}")
+
+        print(
+            f"[Automata] Transition modeli tamamlandı. "
+            f"Benzersiz state sayısı: {len(self.transition_probabilities)}"
+        )
         return self.transition_probabilities
+
+    def fit(self, train_pc1, window_size=None):
+        self.window_size = window_size or self.config["automata"]["base_params"]["window_size"]
+        paa_train = self.apply_paa(train_pc1)
+        sax_train = self.apply_sax(paa_train)
+        train_patterns = self.extract_patterns(sax_train, self.window_size)
+        self.train_pattern_set = set(train_patterns)
+        self.build_transition_model(train_patterns)
+        return train_patterns, sax_train
+
+    def resolve_pattern(self, pattern, use_unseen_mapping=True):
+        is_unseen = pattern not in self.train_pattern_set
+        mapped_pattern = pattern
+        distance = 0
+
+        if is_unseen and use_unseen_mapping:
+            mapped_pattern, distance = self.handle_unseen_pattern(pattern)
+
+        return mapped_pattern, is_unseen, distance
+
     def calculate_levenshtein_distance(self, s1, s2):
-        """
-        İki string (örüntü) arasındaki minimum düzenleme mesafesini 
-        (Ekleme, Silme, Değiştirme) dinamik programlama ile hesaplar.
-        """
         if len(s1) < len(s2):
             return self.calculate_levenshtein_distance(s2, s1)
 
@@ -80,111 +103,161 @@ class ProbabilisticAutomata:
                 substitutions = previous_row[j] + (c1 != c2)
                 current_row.append(min(insertions, deletions, substitutions))
             previous_row = current_row
-        
+
         return previous_row[-1]
 
     def handle_unseen_pattern(self, unseen_pattern):
-        """
-        Daha önce görülmemiş bir örüntü geldiğinde, eğitim setinden öğrenilen
-        en yakın (Levenshtein mesafesi en küçük) örüntüyü bulur.
-        """
         closest_pattern = None
-        min_distance = float('inf')
+        min_distance = float("inf")
 
-        # Eğitimde öğrenilen tüm durumları gez
         for known_pattern in self.transition_probabilities.keys():
             dist = self.calculate_levenshtein_distance(unseen_pattern, known_pattern)
-            
             if dist < min_distance:
                 min_distance = dist
                 closest_pattern = known_pattern
-                
-            # Eğer birebir eşleşme (mesafe=0) bulunursa aramayı kes
             if min_distance == 0:
                 break
-                
-        print(f"[Automata - Unseen] '{unseen_pattern}' -> '{closest_pattern}' ile eşleştirildi (Mesafe: {min_distance})")
+
+        print(
+            f"[Automata - Unseen] '{unseen_pattern}' -> '{closest_pattern}' "
+            f"ile eşleştirildi (Mesafe: {min_distance})"
+        )
         return closest_pattern, min_distance
-    
-    def evaluate_confidence(self, path_probability, threshold=0.05):
-        """
-        Hesaplanan Path Probability değerine göre otomata kararının 
-        güven skorunu (Confidence Score) ve nihai kararını belirler.
-        """
-        # Eşik değerinin (threshold) altındaysa bu beklenmeyen bir durumdur (Anomali)
+
+    def evaluate_confidence(self, path_probability, threshold=None):
+        threshold = threshold or self.threshold
         if path_probability < threshold:
-            decision = "ANOMALY"
-            confidence_level = "Low"
-        else:
-            decision = "NORMAL"
-            confidence_level = "High"
-            
-        return decision, f"{path_probability:.4f} ({confidence_level})"
-    
+            return "ANOMALY", f"{path_probability:.4f} (Low)"
+        return "NORMAL", f"{path_probability:.4f} (High)"
+
     def calculate_path_probability(self, sequence_patterns):
-        """
-        Bir örüntü dizisinin toplam olasılığını (Path Probability), ardışık 
-        geçiş olasılıklarının (transition probabilities) çarpımı ile hesaplar.
-        """
         if not sequence_patterns or len(sequence_patterns) < 2:
-            return 1.0 # Tek durum varsa geçiş yoktur
+            return 1.0, []
 
         path_prob = 1.0
         transitions_made = []
 
         for i in range(len(sequence_patterns) - 1):
             current_state = sequence_patterns[i]
-            next_state = sequence_patterns[i+1]
+            next_state = sequence_patterns[i + 1]
 
-            # Eğer eğitimde böyle bir geçiş hiç görülmediyse olasılık 0 (veya çok küçük bir epsilon) olur
             try:
                 prob = self.transition_probabilities[current_state][next_state]
             except KeyError:
-                prob = 0.001 # Smoothing (Hiç görülmemiş geçiş)
-                
+                prob = 0.001
+
             path_prob *= prob
-            transitions_made.append(f"{current_state} -> {next_state}: {prob:.2f}")
+            transitions_made.append(
+                {"from": current_state, "to": next_state, "probability": round(prob, 4)}
+            )
 
         return path_prob, transitions_made
-    def generate_explanation_json(self, time_step, current_state, incoming_pattern, is_unseen, mapped_state, path_prob, decision):
-        """
-        Proje gereksinimlerinde zorunlu tutulan JSON formatında açıklanabilirlik logu üretir.
-        """
-        explanation = {
+
+    def predict_from_pc1(self, pc1_data, labels, use_unseen_mapping=True):
+        paa_data = self.apply_paa(pc1_data)
+        sax_symbols = self.apply_sax(paa_data)
+        patterns = self.extract_patterns(sax_symbols, self.window_size)
+
+        if len(patterns) < 2:
+            return np.array([]), np.array([]), []
+
+        label_offset = self.window_size - 1
+        y_true = []
+        y_pred = []
+        explanations = []
+
+        for idx in range(1, len(patterns)):
+            prev_pattern, _, _ = self.resolve_pattern(patterns[idx - 1], use_unseen_mapping)
+            current_pattern, is_unseen, distance = self.resolve_pattern(
+                patterns[idx], use_unseen_mapping
+            )
+
+            mapped_current = current_pattern if is_unseen else patterns[idx]
+            path_prob, transitions = self.calculate_path_probability(
+                [prev_pattern, mapped_current]
+            )
+            decision, confidence = self.evaluate_confidence(path_prob)
+
+            label_index = min(idx + label_offset, len(labels) - 1)
+            y_true.append(int(labels[label_index]))
+            y_pred.append(1 if decision == "ANOMALY" else 0)
+
+            explanations.append(
+                self.generate_explanation_json(
+                    time_step=idx,
+                    current_state=prev_pattern,
+                    incoming_pattern=patterns[idx],
+                    is_unseen=is_unseen,
+                    mapped_state=mapped_current,
+                    path_prob=path_prob,
+                    decision=decision,
+                    transitions=transitions,
+                    distance=distance if is_unseen else 0,
+                    confidence=confidence,
+                )
+            )
+
+        return np.array(y_true), np.array(y_pred), explanations
+
+    def evaluate_metrics(self, y_true, y_pred):
+        if len(y_true) == 0:
+            return {
+                "Accuracy": 0.0,
+                "Precision": 0.0,
+                "Recall": 0.0,
+                "F1_Score": 0.0,
+            }
+
+        return {
+            "Accuracy": float(accuracy_score(y_true, y_pred)),
+            "Precision": float(precision_score(y_true, y_pred, zero_division=0)),
+            "Recall": float(recall_score(y_true, y_pred, zero_division=0)),
+            "F1_Score": float(f1_score(y_true, y_pred, zero_division=0)),
+        }
+
+    def generate_explanation_json(
+        self,
+        time_step,
+        current_state,
+        incoming_pattern,
+        is_unseen,
+        mapped_state,
+        path_prob,
+        decision,
+        transitions=None,
+        distance=0,
+        confidence=None,
+    ):
+        return {
             "time_step": time_step,
             "state": current_state,
             "pattern": incoming_pattern,
             "status": "unseen" if is_unseen else "known",
-            "mapped_to": mapped_state if is_unseen else current_state,
+            "mapped_to": mapped_state if is_unseen else incoming_pattern,
+            "distance": distance,
+            "transitions": transitions or [],
             "probability": round(path_prob, 4),
-            "decision": decision.lower()
+            "confidence": confidence,
+            "decision": decision.lower(),
         }
-        
-        # Bu log daha sonra logger.py aracılığıyla config'de belirtilen yere kaydedilecek
-        return explanation
+
     def analyze_counterfactual(self, current_state, original_pattern, alternative_pattern):
-        """
-        [Modülü] Karşıt Durum Analizi (Counterfactual):
-        Modele gelen orijinal örüntü yerine, alternatif bir örüntü gelseydi 
-        kararın nasıl değişeceğini simüle eder.
-        """
-        print(f"\n[Counterfactual Analysis] Orijinal: '{original_pattern}' | Alternatif: '{alternative_pattern}'")
-        
-        # Orijinal pattern için yol olasılığı
-        sequence_original = [current_state, original_pattern]
-        prob_orig, _ = self.calculate_path_probability(sequence_original)
+        print(
+            f"\n[Counterfactual Analysis] Orijinal: '{original_pattern}' | "
+            f"Alternatif: '{alternative_pattern}'"
+        )
+
+        prob_orig, _ = self.calculate_path_probability([current_state, original_pattern])
         decision_orig, conf_orig = self.evaluate_confidence(prob_orig)
-        
-        # Alternatif pattern için yol olasılığı
-        sequence_alt = [current_state, alternative_pattern]
-        prob_alt, _ = self.calculate_path_probability(sequence_alt)
+
+        prob_alt, _ = self.calculate_path_probability([current_state, alternative_pattern])
         decision_alt, conf_alt = self.evaluate_confidence(prob_alt)
-        
+
         print(f" -> Orijinal Karar: {decision_orig} (Güven: {conf_orig})")
         print(f" -> Alternatif Karar: {decision_alt} (Güven: {conf_alt})")
-        
+
         return {
             "original_decision": decision_orig,
             "alternative_decision": decision_alt,
-            "probability_change": round(prob_alt - prob_orig, 4)
+            "probability_change": round(prob_alt - prob_orig, 4),
         }

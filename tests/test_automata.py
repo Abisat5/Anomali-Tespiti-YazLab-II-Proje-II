@@ -11,6 +11,12 @@ class MockConfig:
     def __init__(self):
         self.config = {
             'automata': {
+                'base_params': {
+                    'window_size': 4,
+                    'alphabet_size': 3,
+                    'paa_segment_size': 1,
+                    'path_probability_threshold': 0.05,
+                },
                 'variation_params': {'window_sizes': [3, 4, 5, 6]}
             }
         }

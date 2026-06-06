@@ -8,7 +8,8 @@
     "processed_data": "data/processed/",
     "logs": "logs/",
     "models": "src/models/saved_weights/",
-    "skab_subfolders": ["valve1", "valve2"]
+    "skab_subfolders": ["valve1", "valve2"],
+    "batadal_file": "batadal.csv"
   },
   "data_split": {
     "train": 0.60,
@@ -17,6 +18,7 @@
   },
   "experiment_settings": {
     "random_seeds": [42, 123, 2026, 7, 999],
+    "skab_cv_folds": 5,
     "noise_injection": {
       "type": "gaussian",
       "mean": 0.0,
@@ -27,12 +29,16 @@
     "epochs": 50,
     "batch_size": 32,
     "early_stopping_patience": 5,
-    "learning_rate": 0.001
+    "learning_rate": 0.001,
+    "sequence_length": 10,
+    "anomaly_threshold_percentile": 95
   },
   "automata": {
     "base_params": {
       "window_size": 4,
-      "alphabet_size": 3
+      "alphabet_size": 3,
+      "paa_segment_size": 1,
+      "path_probability_threshold": 0.05
     },
     "variation_params": {
       "window_sizes": [3, 4, 5, 6],
@@ -40,6 +46,7 @@
     }
   },
   "explainability": {
-    "output_format": "json"
+    "output_format": "json",
+    "max_logged_decisions": 50
   }
 }

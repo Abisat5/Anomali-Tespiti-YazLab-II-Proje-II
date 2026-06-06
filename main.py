@@ -11,7 +11,7 @@ def load_config(config_path="configs/config.json"):
         return json.load(f)
 
 def main():
-    print("YazLab-II Proje 1 Başlatılıyor...")
+    print("YazLab-II Proje II Başlatılıyor...")
     
     # 1. Merkezi konfigürasyonu yükle
     config = load_config()
@@ -20,7 +20,7 @@ def main():
     # 2. Pipeline'ı başlat
     anomali_pipeline = Pipeline(config)
     
-    # 3. Akışı çalıştır (Şimdilik sadece iskelet)
+    # 3. Tam entegre pipeline akışını çalıştır
     anomali_pipeline.run()
 
 if __name__ == "__main__":

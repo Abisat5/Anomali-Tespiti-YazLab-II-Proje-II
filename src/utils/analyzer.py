@@ -1,3 +1,5 @@
+import copy
+
 import pandas as pd
 
 class ParameterAnalyzer:
@@ -43,7 +45,7 @@ class ParameterAnalyzer:
         results = []
         
         # Orijinal config'i bozmamak için kopyala
-        temp_config = self.config.copy()
+        temp_config = copy.deepcopy(self.config)
         
         for a_size in self.alphabet_sizes:
             temp_config['automata']['base_params']['alphabet_size'] = a_size
@@ -67,7 +69,9 @@ class ParameterAnalyzer:
                 "Transition_Density": round(transition_density, 3)
             })
             print(f"  -> Alphabet {a_size}: State Sayısı={state_count}, Yoğunluk={transition_density:.3f}")
-            
+
+        return results
+
     def export_analysis_to_table(self, all_results, filepath="logs/parameter_analysis.csv"):
         
         import os
@@ -83,5 +87,4 @@ class ParameterAnalyzer:
         df_results = pd.DataFrame(all_results)
         df_results.to_csv(filepath, index=False)
         print("[ParameterAnalyzer] Tablo başarıyla kaydedildi. (Rapor Markdown'ına kopyalanmaya hazır)")
-
-        return results
+        return df_results
