@@ -172,7 +172,7 @@ class ProbabilisticAutomata:
                 np.array([]),
                 np.array([]),
                 [],
-                {"unseen_count": 0, "total_patterns": 0},
+                {"unseen_count": 0, "total_patterns": 0, "detection_rate": 0.0, "mapping_accuracy": 0.0},
             )
 
         label_offset = self.window_size - 1
@@ -181,6 +181,8 @@ class ProbabilisticAutomata:
         anomaly_scores = []
         explanations = []
         unseen_count = 0
+        mapping_scores = []
+        unseen_anomaly_hits = 0
 
         for idx in range(1, len(patterns)):
             prev_pattern, _, _ = self.resolve_pattern(patterns[idx - 1], use_unseen_mapping)
@@ -189,12 +191,16 @@ class ProbabilisticAutomata:
             )
             if is_unseen:
                 unseen_count += 1
+                mapping_scores.append(max(0.0, 1.0 - distance / self.window_size))
 
             mapped_current = current_pattern if is_unseen else patterns[idx]
             path_prob, transitions = self.calculate_path_probability(
                 [prev_pattern, mapped_current]
             )
             decision, confidence = self.evaluate_confidence(path_prob)
+
+            if is_unseen and decision == "ANOMALY":
+                unseen_anomaly_hits += 1
 
             label_index = min(idx + label_offset, len(labels) - 1)
             y_true.append(int(labels[label_index]))
@@ -216,10 +222,16 @@ class ProbabilisticAutomata:
                 )
             )
 
+        evaluated = max(len(patterns) - 1, 1)
         unseen_stats = {
             "unseen_count": unseen_count,
             "total_patterns": len(patterns),
             "unseen_ratio": round(unseen_count / max(len(patterns), 1), 4),
+            "detection_rate": round(unseen_count / evaluated, 4),
+            "mapping_accuracy": round(float(np.mean(mapping_scores)), 4) if mapping_scores else 1.0,
+            "unseen_anomaly_detection_rate": round(
+                unseen_anomaly_hits / max(unseen_count, 1), 4
+            ) if unseen_count else 0.0,
         }
         return (
             np.array(y_true),

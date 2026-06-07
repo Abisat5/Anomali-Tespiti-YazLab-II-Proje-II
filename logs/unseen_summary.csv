@@ -1,0 +1,3 @@
+Dataset,Model,F1_Original,F1_Noisy,F1_Unseen,Detection_Rate,Mapping_Accuracy
+SKAB,Automata,0.0311,0.0465,0.0311,0.0034,0.7692
+BATADAL,Automata,0.0202,0.0582,0.0202,0.0012,0.75

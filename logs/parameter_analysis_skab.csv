@@ -1,0 +1,9 @@
+Parameter,Value,State_Count,Transition_Density,Accuracy,F1_Score,Dataset
+Window_Size,3,23,2.043,0.6566,0.0141,SKAB
+Window_Size,4,47,1.809,0.6556,0.014,SKAB
+Window_Size,5,85,1.847,0.6553,0.0115,SKAB
+Window_Size,6,157,1.847,0.6512,0.044,SKAB
+Alphabet_Size,3,47,1.809,0.6556,0.014,SKAB
+Alphabet_Size,4,109,2.064,0.6291,0.0258,SKAB
+Alphabet_Size,5,183,2.197,0.634,0.0649,SKAB
+Alphabet_Size,6,276,2.272,0.6271,0.0731,SKAB

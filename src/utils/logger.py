@@ -24,6 +24,8 @@ class ExperimentLogger:
             "statistical_tests": [],
             "explainability": [],
             "parameter_analysis": [],
+            "runtime_records": [],
+            "unseen_analysis": [],
         }
 
     def log_dataset_info(self, dataset_name, info):
@@ -63,6 +65,14 @@ class ExperimentLogger:
 
     def log_explainability(self, decision_data):
         self.results["explainability"].append(decision_data)
+        self.save()
+
+    def log_runtime_record(self, record):
+        self.results["runtime_records"].append(record)
+        self.save()
+
+    def log_unseen_analysis(self, record):
+        self.results["unseen_analysis"].append(record)
         self.save()
 
     def save(self):
@@ -110,3 +120,31 @@ class ExperimentLogger:
             flat_rows.append(flat)
         pd.DataFrame(flat_rows).to_csv(csv_path, index=False)
         print(f"[Logger] Explainability CSV kaydedildi: {csv_path}")
+
+    def export_runtime_csv(self, filepath="logs/runtime_comparison.csv"):
+        import pandas as pd
+
+        rows = self.results.get("runtime_records", [])
+        if not rows:
+            print("[Logger] Runtime kaydı bulunamadı, export atlandı.")
+            return None
+
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        df = pd.DataFrame(rows)
+        df.to_csv(filepath, index=False)
+        print(f"[Logger] Runtime tablosu kaydedildi: {filepath}")
+        return df
+
+    def export_unseen_analysis_csv(self, filepath="logs/unseen_analysis.csv"):
+        import pandas as pd
+
+        rows = self.results.get("unseen_analysis", [])
+        if not rows:
+            print("[Logger] Unseen analiz kaydı bulunamadı, export atlandı.")
+            return None
+
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        df = pd.DataFrame(rows)
+        df.to_csv(filepath, index=False)
+        print(f"[Logger] Unseen analiz tablosu kaydedildi: {filepath}")
+        return df

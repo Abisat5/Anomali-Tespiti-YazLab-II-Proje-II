@@ -36,9 +36,36 @@ env/
 *.swp
 *.swo
 
-# Büyük Veriler ve Loglar
+# Büyük Veriler
 data/
-logs/
+
+# Deney logları — varsayılan hariç; README / EK için gerekli dosyalar aşağıda açılır
+logs/*
+!logs/EK_RAPOR_TABLOLARI.md
+!logs/experiment_summary.csv
+!logs/runtime_summary.csv
+!logs/runtime_comparison.csv
+!logs/unseen_summary.csv
+!logs/unseen_analysis.csv
+!logs/parameter_analysis_skab.csv
+!logs/parameter_analysis_batadal.csv
+!logs/explainability_report.csv
+!logs/BATADAL_seed_42_CNN1D_original_confusion_matrix.png
+!logs/BATADAL_seed_42_GRU_original_confusion_matrix.png
+!logs/BATADAL_seed_42_LSTM_original_roc_curve.png
+!logs/BATADAL_seed_42_GRU_original_pr_curve.png
+!logs/SKAB_seed_42_fold_2_CNN1D_original_confusion_matrix.png
+!logs/SKAB_seed_42_fold_2_CNN1D_noisy_pr_curve.png
+!logs/automata_state_diagram_BATADAL_seed42.png
+!logs/automata_transition_heatmap_BATADAL_seed42.png
+!logs/automata_state_diagram_SKAB_seed42.png
+!logs/sensitivity_skab_window_size_vs_f1_score_skab.png
+!logs/sensitivity_batadal_alphabet_size_vs_f1_score_batadal.png
+
+# Büyük / gereksiz log dosyaları (repo boyutu)
+logs/exp_*.json
+logs/explainability_report.json
+logs/*.txt
 *.log
 
 # Deep Learning

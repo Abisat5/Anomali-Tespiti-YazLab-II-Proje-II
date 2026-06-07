@@ -1,3 +1,6 @@
+import time
+
+
 class ModelTrainer:
     def __init__(self, config, compiled_model):
         self.config = config
@@ -27,17 +30,18 @@ class ModelTrainer:
         )
         
         print(f"[Trainer] {self.model.name} eğitimi başlatılıyor... (Early Stopping Patience: {patience})")
-        
-        # Autoencoder mantığı: Girdi X, hedef de X (kendi kendini kopyalamaya çalışır)
+
+        start = time.perf_counter()
         history = self.model.fit(
             X_train, X_train,
             epochs=self.epochs,
             batch_size=self.batch_size,
             validation_data=(X_val, X_val),
             callbacks=[early_stopping],
-            shuffle=False,  # Zaman serisinde veri sırası KESİNLİKLE bozulmaz!
+            shuffle=False,
             verbose=1
         )
-        
-        print(f"[Trainer] {self.model.name} eğitimi tamamlandı.")
-        return history
+        train_time = round(time.perf_counter() - start, 4)
+
+        print(f"[Trainer] {self.model.name} eğitimi tamamlandı. ({train_time:.2f} sn)")
+        return history, train_time

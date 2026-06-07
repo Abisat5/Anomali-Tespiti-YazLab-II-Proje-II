@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 
 
@@ -33,6 +35,8 @@ def threshold_from_validation(model, x_val, percentile):
 
 
 def predict_with_threshold(model, x_test, threshold):
+    start = time.perf_counter()
     scores = reconstruction_scores(model, x_test)
     y_pred = (scores > threshold).astype(int)
-    return y_pred, scores
+    inference_time = round(time.perf_counter() - start, 4)
+    return y_pred, scores, inference_time

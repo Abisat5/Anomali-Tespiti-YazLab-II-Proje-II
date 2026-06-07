@@ -58,3 +58,29 @@ class LSTMAnomalyDetector:
 
     def summary(self):
         self.model.summary()
+
+
+class GRUAnomalyDetector:
+    def __init__(self, config, seq_len, n_features):
+        self.config = config
+        self.seq_len = seq_len
+        self.n_features = n_features
+        self.learning_rate = config['deep_learning']['learning_rate']
+        self.model = self._build_model()
+
+    def _build_model(self):
+        print("[GRU] Model mimarisi inşa ediliyor...")
+        model = models.Sequential(name="GRU_Autoencoder")
+        model.add(layers.Input(shape=(self.seq_len, self.n_features)))
+        model.add(layers.GRU(64, activation='relu', return_sequences=True))
+        model.add(layers.GRU(32, activation='relu', return_sequences=False))
+        model.add(layers.RepeatVector(self.seq_len))
+        model.add(layers.GRU(32, activation='relu', return_sequences=True))
+        model.add(layers.GRU(64, activation='relu', return_sequences=True))
+        model.add(layers.TimeDistributed(layers.Dense(self.n_features)))
+        optimizer = tf.keras.optimizers.Adam(learning_rate=self.learning_rate)
+        model.compile(optimizer=optimizer, loss='mse')
+        return model
+
+    def summary(self):
+        self.model.summary()

@@ -1,7 +1,9 @@
+import time
+
 import numpy as np
 
 from src.models.automata import ProbabilisticAutomata
-from src.models.deep_learning import CNN1DAnomalyDetector, LSTMAnomalyDetector
+from src.models.deep_learning import CNN1DAnomalyDetector, GRUAnomalyDetector, LSTMAnomalyDetector
 from src.models.trainer import ModelTrainer
 from src.preprocessing.data_loader import DataLoader
 from src.preprocessing.noise_injector import NoiseInjector
@@ -21,7 +23,8 @@ from src.utils.visualizer import Visualizer
 
 class Pipeline:
     SCENARIOS = ("original", "noisy", "unseen")
-    MODELS = ("LSTM", "CNN1D", "Automata")
+    DL_MODELS = ("LSTM", "GRU", "CNN1D")
+    MODELS = ("LSTM", "GRU", "CNN1D", "Automata")
 
     def __init__(self, config):
         self.config = config
@@ -220,22 +223,19 @@ class Pipeline:
 
             if scenario == "unseen":
                 print("[Pipeline] Unseen senaryosu: otomata odaklı, DL atlanıyor.")
-                dl_results = {m: self._empty_metrics() for m in ("LSTM", "CNN1D")}
+                dl_results = {m: self._empty_metrics() for m in self.DL_MODELS}
             else:
                 dl_results = self._run_deep_learning(context, scenario, processed)
 
             automata_results, unseen_stats = self._run_automata(context, scenario, processed)
 
-            for model in ("LSTM", "CNN1D"):
+            for model in self.DL_MODELS:
                 scenario_results[model][scenario] = dl_results[model]
             scenario_results["Automata"][scenario] = automata_results
 
-            summary = {
-                "LSTM": dl_results["LSTM"],
-                "CNN1D": dl_results["CNN1D"],
-                "Automata": automata_results,
-                "unseen_stats": unseen_stats,
-            }
+            summary = {model: dl_results[model] for model in self.DL_MODELS}
+            summary["Automata"] = automata_results
+            summary["unseen_stats"] = unseen_stats
             self.logger.log_scenario_summary(
                 context["dataset_name"], context["seed"], scenario, summary
             )
@@ -259,24 +259,35 @@ class Pipeline:
         x_test, y_test = create_sequences(test_x, processed["test_labels"], self.seq_len)
 
         if len(x_train) == 0 or len(x_test) == 0:
-            return {m: self._empty_metrics() for m in ("LSTM", "CNN1D")}
+            return {m: self._empty_metrics() for m in self.DL_MODELS}
 
         n_features = x_train.shape[2]
-        builders = {"LSTM": LSTMAnomalyDetector, "CNN1D": CNN1DAnomalyDetector}
+        builders = {
+            "LSTM": LSTMAnomalyDetector,
+            "GRU": GRUAnomalyDetector,
+            "CNN1D": CNN1DAnomalyDetector,
+        }
 
         for model_name, builder in builders.items():
             detector = builder(self.config, self.seq_len, n_features)
             trainer = ModelTrainer(self.config, detector)
             trainer.setup_training()
-            trainer.train(x_train, x_val)
+            _, train_time = trainer.train(x_train, x_val)
 
             threshold = threshold_from_validation(detector.model, x_val, self.threshold_percentile)
-            y_pred, scores = predict_with_threshold(detector.model, x_test, threshold)
+            y_pred, scores, inference_time = predict_with_threshold(
+                detector.model, x_test, threshold
+            )
             metrics = self._compute_metrics(y_test, y_pred)
 
             metric_key = self._metric_key(context, model_name, scenario)
             self.logger.log_metrics(metric_key, metrics)
             self._record_metrics(context, model_name, scenario, metrics)
+            self.logger.log_runtime_record(
+                self._runtime_record(
+                    context, model_name, scenario, train_time, inference_time
+                )
+            )
 
             safe_key = metric_key.replace(" ", "_")
             self.visualizer.plot_confusion_matrix(y_test, y_pred, safe_key)
@@ -291,7 +302,10 @@ class Pipeline:
                 self.logger.log_batadal_test_result(context["seed"], scenario, model_name, metrics)
 
             results[model_name] = metrics
-            print(f"[Pipeline] {model_name}/{scenario}: {metrics}")
+            print(
+                f"[Pipeline] {model_name}/{scenario}: {metrics} | "
+                f"train={train_time:.2f}s, infer={inference_time:.2f}s"
+            )
 
         return results
 
@@ -300,18 +314,30 @@ class Pipeline:
         sax_converter.fit_transform(processed["train_pc1"])
 
         automata = ProbabilisticAutomata(self.config, sax_converter)
+        train_start = time.perf_counter()
         automata.fit(processed["train_pc1"])
+        train_time = round(time.perf_counter() - train_start, 4)
 
+        infer_start = time.perf_counter()
         y_true, y_pred, scores, explanations, unseen_stats = automata.predict_from_pc1(
             processed["test_pc1"],
             processed["test_labels"],
             use_unseen_mapping=True,
         )
+        inference_time = round(time.perf_counter() - infer_start, 4)
 
         metrics = automata.evaluate_metrics(y_true, y_pred)
         metric_key = self._metric_key(context, "Automata", scenario)
         self.logger.log_metrics(metric_key, metrics)
         self._record_metrics(context, "Automata", scenario, metrics)
+        self.logger.log_runtime_record(
+            self._runtime_record(
+                context, "Automata", scenario, train_time, inference_time
+            )
+        )
+        self.logger.log_unseen_analysis(
+            self._unseen_record(context, scenario, metrics, unseen_stats)
+        )
 
         max_logs = self.config["explainability"].get("max_logged_decisions", 50)
         for explanation in explanations[:max_logs]:
@@ -364,6 +390,35 @@ class Pipeline:
         parts.extend([model_name, scenario])
         return "_".join(parts)
 
+    def _runtime_record(self, context, model_name, scenario, train_time, inference_time):
+        record = {
+            "Dataset": context["dataset_name"],
+            "Seed": context["seed"],
+            "Scenario": scenario,
+            "Model": model_name,
+            "Training_Time_sec": train_time,
+            "Inference_Time_sec": inference_time,
+        }
+        if context["fold_idx"] is not None:
+            record["Fold"] = context["fold_idx"]
+        return record
+
+    def _unseen_record(self, context, scenario, metrics, unseen_stats):
+        record = {
+            "Dataset": context["dataset_name"],
+            "Seed": context["seed"],
+            "Scenario": scenario,
+            "Model": "Automata",
+            "F1_Score": metrics["F1_Score"],
+            "Detection_Rate": unseen_stats.get("detection_rate", 0.0),
+            "Mapping_Accuracy": unseen_stats.get("mapping_accuracy", 0.0),
+            "Unseen_Count": unseen_stats.get("unseen_count", 0),
+            "Total_Patterns": unseen_stats.get("total_patterns", 0),
+        }
+        if context["fold_idx"] is not None:
+            record["Fold"] = context["fold_idx"]
+        return record
+
     def _compute_metrics(self, y_true, y_pred):
         from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 
@@ -405,8 +460,11 @@ class Pipeline:
             ("BATADAL", self.batadal_seed_metrics),
         ):
             comparisons = [
+                ("LSTM", "GRU"),
                 ("LSTM", "CNN1D"),
+                ("GRU", "CNN1D"),
                 ("LSTM", "Automata"),
+                ("GRU", "Automata"),
                 ("CNN1D", "Automata"),
             ]
             for name_a, name_b in comparisons:
@@ -421,8 +479,11 @@ class Pipeline:
                     self.logger.log_statistical_test(result)
 
         mcnemar_pairs = [
+            ("LSTM", "GRU"),
             ("LSTM", "CNN1D"),
+            ("GRU", "CNN1D"),
             ("LSTM", "Automata"),
+            ("GRU", "Automata"),
             ("CNN1D", "Automata"),
         ]
         for seed, preds in self._batadal_predictions_by_seed.items():
@@ -515,4 +576,62 @@ class Pipeline:
         self.logger.save()
         self.logger.export_summary_csv()
         self.logger.export_explainability()
+        self.logger.export_runtime_csv()
+        self.logger.export_unseen_analysis_csv()
+        self._export_runtime_summary()
+        self._export_unseen_summary_table()
         print(f"\n[Pipeline] Deney logları: {self.logger.log_file}")
+
+    def _export_runtime_summary(self):
+        import pandas as pd
+
+        rows = self.logger.results.get("runtime_records", [])
+        if not rows:
+            return
+
+        df = pd.DataFrame(rows)
+        summary = (
+            df.groupby("Model")[["Training_Time_sec", "Inference_Time_sec"]]
+            .mean()
+            .round(2)
+            .reset_index()
+        )
+        summary.columns = ["Model", "Training_Time_sec", "Inference_Time_sec"]
+        path = "logs/runtime_summary.csv"
+        summary.to_csv(path, index=False)
+        self.logger.log_aggregated_metrics("runtime_summary", summary.to_dict("records"))
+        print(f"[Pipeline] Runtime özeti kaydedildi: {path}")
+
+    def _export_unseen_summary_table(self):
+        import pandas as pd
+
+        rows = self.logger.results.get("unseen_analysis", [])
+        if not rows:
+            return
+
+        df = pd.DataFrame(rows)
+        summary_rows = []
+        for dataset in df["Dataset"].unique():
+            sub = df[df["Dataset"] == dataset]
+            original = sub[sub["Scenario"] == "original"]["F1_Score"]
+            noisy = sub[sub["Scenario"] == "noisy"]["F1_Score"]
+            unseen = sub[sub["Scenario"] == "unseen"]["F1_Score"]
+            unseen_rows = sub[sub["Scenario"] == "unseen"]
+            summary_rows.append(
+                {
+                    "Dataset": dataset,
+                    "Model": "Automata",
+                    "F1_Original": round(original.mean(), 4) if len(original) else None,
+                    "F1_Noisy": round(noisy.mean(), 4) if len(noisy) else None,
+                    "F1_Unseen": round(unseen.mean(), 4) if len(unseen) else None,
+                    "Detection_Rate": round(unseen_rows["Detection_Rate"].mean(), 4)
+                    if len(unseen_rows)
+                    else round(sub["Detection_Rate"].mean(), 4),
+                    "Mapping_Accuracy": round(sub["Mapping_Accuracy"].mean(), 4),
+                }
+            )
+
+        summary = pd.DataFrame(summary_rows)
+        path = "logs/unseen_summary.csv"
+        summary.to_csv(path, index=False)
+        print(f"[Pipeline] Unseen özet tablosu kaydedildi: {path}")
