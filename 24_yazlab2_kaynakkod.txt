@@ -1,0 +1,1814 @@
+================================================================================
+DOSYA: configs/config.json
+================================================================================
+{
+  "project": {
+    "group_id": 24,
+    "datasets": [
+      "SKAB",
+      "BATADAL"
+    ]
+  },
+  "paths": {
+    "raw_data": "data/raw/",
+    "processed_data": "data/processed/",
+    "logs": "logs/",
+    "models": "src/models/saved_weights/",
+    "skab_subfolders": [
+      "valve1",
+      "valve2"
+    ],
+    "batadal_file": "BATADAL_dataset04.csv"
+  },
+  "data_split": {
+    "train": 0.6,
+    "validation": 0.2,
+    "test": 0.2,
+    "fold_train_ratio": 0.75
+  },
+  "experiment_settings": {
+    "random_seeds": [
+      42,
+      123,
+      2026,
+      7,
+      999
+    ],
+    "skab_cv_folds": 5,
+    "cv_random_state": 42,
+    "noise_injection": {
+      "type": "gaussian",
+      "mean": 0.0,
+      "std_dev": 0.05
+    }
+  },
+  "deep_learning": {
+    "epochs": 50,
+    "batch_size": 32,
+    "early_stopping_patience": 5,
+    "learning_rate": 0.001,
+    "sequence_length": 10,
+    "anomaly_threshold_percentile": 95
+  },
+  "automata": {
+    "base_params": {
+      "window_size": 4,
+      "alphabet_size": 3,
+      "paa_segment_size": 1,
+      "path_probability_threshold": 0.05,
+      "smoothing_alpha": 1.0,
+      "unknown_transition_prob": 0.001
+    },
+    "variation_params": {
+      "window_sizes": [
+        3,
+        4,
+        5,
+        6
+      ],
+      "alphabet_sizes": [
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    "visualization": {
+      "state_diagram_threshold": 0.1,
+      "heatmap_top_n": 20
+    }
+  },
+  "explainability": {
+    "output_format": "json",
+    "max_logged_decisions": 50,
+    "export_json": "logs/explainability_report.json",
+    "export_csv": "logs/explainability_report.csv"
+  },
+  "quick_test": {
+    "enabled": false,
+    "seeds": [
+      42
+    ],
+    "skab_folds": 2,
+    "epochs": 3
+  }
+}
+
+================================================================================
+DOSYA: main.py
+================================================================================
+import json
+import os
+from src.pipeline import Pipeline
+
+def load_config(config_path='configs/config.json'):
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f'Konfigürasyon dosyası bulunamadı: {config_path}')
+    with open(config_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+def main():
+    print('YazLab-II Proje II Başlatılıyor...')
+    config = load_config()
+    print(f"Grup {config['project']['group_id']} - Veri Setleri: {config['project']['datasets']} yükleniyor.")
+    anomali_pipeline = Pipeline(config)
+    anomali_pipeline.run()
+if __name__ == '__main__':
+    main()
+
+================================================================================
+DOSYA: requirements.txt
+================================================================================
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+scipy>=1.11.0
+matplotlib>=3.7.0
+seaborn>=0.13.0
+networkx>=3.1
+tensorflow>=2.13.0
+
+================================================================================
+DOSYA: run.bat
+================================================================================
+@echo off
+cd /d "%~dp0"
+call venv\Scripts\activate.bat
+python main.py
+pause
+
+================================================================================
+DOSYA: scripts/check_data.py
+================================================================================
+import json
+import os
+import sys
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+from src.preprocessing.data_loader import DataLoader
+
+def main():
+    config_path = os.path.join(ROOT, 'configs', 'config.json')
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = json.load(f)
+    loader = DataLoader(config)
+    print(f'Veri dizini: {loader.raw_path}\n')
+    ok = True
+    for dataset_name in config['project']['datasets']:
+        print(f'--- {dataset_name} ---')
+        df = loader.load_data(dataset_name)
+        if df is None:
+            ok = False
+            print(f'[EKSIK] {dataset_name} yuklenemedi.\n')
+            continue
+        label_col = loader.detect_label_column(df, dataset_name)
+        feature_cols = loader.get_feature_columns(df, label_col)
+        print(f'Etiket sutunu: {label_col}')
+        print(f'Ozellik sayisi: {len(feature_cols)}')
+        print(f'Satir sayisi: {len(df)}')
+        if dataset_name == 'SKAB':
+            groups = df.groupby('source_group')['source_file'].nunique()
+            for group, count in groups.items():
+                print(f'  {group}: {count} dosya')
+        print()
+    if ok:
+        print('Tum veri setleri hazir. Calistirmak icin: python main.py')
+    else:
+        print('Eksik veri var. Uretmek icin: python scripts/generate_sample_data.py')
+        sys.exit(1)
+if __name__ == '__main__':
+    main()
+
+================================================================================
+DOSYA: scripts/generate_sample_data.py
+================================================================================
+import os
+import numpy as np
+import pandas as pd
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RAW = os.path.join(ROOT, 'data', 'raw')
+SKAB_FILES_PER_VALVE = 5
+SKAB_ROWS = 400
+BATADAL_ROWS = 2000
+
+def generate_skab():
+    rng = np.random.default_rng(42)
+    base = os.path.join(RAW, 'SKAB')
+    for group in ('valve1', 'valve2'):
+        group_path = os.path.join(base, group)
+        os.makedirs(group_path, exist_ok=True)
+        for idx in range(SKAB_FILES_PER_VALVE):
+            n = SKAB_ROWS
+            t = np.arange(n)
+            phase = idx * 0.7
+            sensor_a = np.sin(t / 10 + phase) + rng.normal(0, 0.05, n)
+            sensor_b = np.cos(t / 8 + phase) + rng.normal(0, 0.05, n)
+            sensor_c = rng.normal(0, 1, n)
+            anomaly = np.zeros(n, dtype=int)
+            start = 180 + idx * 15
+            end = min(start + 20, n - 1)
+            anomaly[start:end] = 1
+            if idx % 2 == 1:
+                anomaly[60:75] = 1
+            df = pd.DataFrame({'datetime': pd.date_range('2020-01-01', periods=n, freq='min'), 'sensor_a': sensor_a, 'sensor_b': sensor_b, 'sensor_c': sensor_c, 'changepoint': 0, 'anomaly': anomaly})
+            df.loc[anomaly == 1, 'sensor_c'] += 3.0
+            out = os.path.join(group_path, f'{group}_run_{idx:02d}.csv')
+            df.to_csv(out, sep=';', index=False)
+            print(f'[OK] {out}')
+
+def generate_batadal():
+    os.makedirs(RAW, exist_ok=True)
+    batadal_dir = os.path.join(RAW, 'BATADAL')
+    os.makedirs(batadal_dir, exist_ok=True)
+    rng = np.random.default_rng(123)
+    n = BATADAL_ROWS
+    t = np.arange(n)
+    df = pd.DataFrame({'DATETIME': pd.date_range('2016-01-01', periods=n, freq='min'), 'L_T1': 1.0 + 0.01 * np.sin(t / 15) + rng.normal(0, 0.02, n), 'L_T2': 1.2 + 0.01 * np.cos(t / 12) + rng.normal(0, 0.02, n), 'F1': 10 + rng.normal(0, 0.5, n), 'S1': 5 + rng.normal(0, 0.3, n), 'ATT_FLAG': 0})
+    df.loc[1400:1480, 'ATT_FLAG'] = 1
+    df.loc[1400:1480, 'F1'] += 4.0
+    outputs = [os.path.join(RAW, 'batadal.csv'), os.path.join(batadal_dir, 'Training Dataset 2.csv')]
+    for out in outputs:
+        df.to_csv(out, index=False)
+        print(f'[OK] {out} (etiket sutunu: ATT_FLAG)')
+if __name__ == '__main__':
+    generate_skab()
+    generate_batadal()
+    print('\nOrnek veri uretildi.')
+    print('Kontrol icin: python scripts/check_data.py')
+    print('Calistirmak icin: python main.py')
+
+================================================================================
+DOSYA: src/__init__.py
+================================================================================
+
+
+================================================================================
+DOSYA: src/models/__init__.py
+================================================================================
+
+
+================================================================================
+DOSYA: src/models/automata.py
+================================================================================
+import numpy as np
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+
+class ProbabilisticAutomata:
+
+    def __init__(self, config, sax_converter):
+        self.config = config
+        automata_cfg = config['automata']
+        base_params = automata_cfg.get('base_params', {})
+        self.window_sizes = automata_cfg['variation_params']['window_sizes']
+        self.sax_converter = sax_converter
+        self.transition_probabilities = {}
+        self.train_pattern_set = set()
+        self.window_size = base_params.get('window_size', 4)
+        self.paa_segment_size = base_params.get('paa_segment_size', 1)
+        self.threshold = base_params.get('path_probability_threshold', 0.05)
+        self.smoothing_alpha = base_params.get('smoothing_alpha', 1.0)
+        self.unknown_transition_prob = base_params.get('unknown_transition_prob', 0.001)
+
+    def apply_paa(self, data, segment_size=None):
+        segment_size = segment_size or self.paa_segment_size
+        print(f'[Automata] PAA uygulanıyor... (Segment Boyutu: {segment_size})')
+        data = np.asarray(data, dtype=float)
+        remainder = len(data) % segment_size
+        data_trimmed = data[:-remainder] if remainder else data
+        if len(data_trimmed) == 0:
+            return data_trimmed
+        paa_data = data_trimmed.reshape(-1, segment_size).mean(axis=1)
+        print(f'[Automata] PAA Tamamlandı. (Orijinal: {len(data)}, Sıkıştırılmış: {len(paa_data)})')
+        return paa_data
+
+    def apply_sax(self, paa_data):
+        print('[Automata] PAA verisi SAX sembollerine dönüştürülüyor...')
+        return self.sax_converter.transform(paa_data)
+
+    def extract_patterns(self, sax_symbols, window_size=None):
+        window_size = window_size or self.window_size
+        print(f'[Automata] Sliding Window (Boyut: {window_size}) ile örüntüler çıkarılıyor...')
+        patterns = []
+        for i in range(len(sax_symbols) - window_size + 1):
+            patterns.append(''.join(sax_symbols[i:i + window_size]))
+        print(f'[Automata] Toplam {len(patterns)} adet örüntü çıkarıldı.')
+        return patterns
+
+    def build_transition_model(self, patterns):
+        print('[Automata] Olasılıksal durum geçiş modeli inşa ediliyor...')
+        transition_counts = {}
+        for i in range(len(patterns) - 1):
+            current_state = patterns[i]
+            next_state = patterns[i + 1]
+            transition_counts.setdefault(current_state, {})
+            transition_counts[current_state][next_state] = transition_counts[current_state].get(next_state, 0) + 1
+        alpha = self.smoothing_alpha
+        self.transition_probabilities = {}
+        for current_state, transitions in transition_counts.items():
+            total_transitions = sum(transitions.values())
+            num_targets = len(transitions)
+            self.transition_probabilities[current_state] = {next_state: float((count + alpha) / (total_transitions + alpha * num_targets)) for next_state, count in transitions.items()}
+        print(f'[Automata] Transition modeli tamamlandı (smoothing={alpha}). Benzersiz state sayısı: {len(self.transition_probabilities)}')
+        return self.transition_probabilities
+
+    def get_transition_probability(self, from_state, to_state):
+        try:
+            return self.transition_probabilities[from_state][to_state]
+        except KeyError:
+            return self.unknown_transition_prob
+
+    def fit(self, train_pc1, window_size=None):
+        self.window_size = window_size or self.config['automata']['base_params']['window_size']
+        paa_train = self.apply_paa(train_pc1)
+        sax_train = self.apply_sax(paa_train)
+        train_patterns = self.extract_patterns(sax_train, self.window_size)
+        self.train_pattern_set = set(train_patterns)
+        self.build_transition_model(train_patterns)
+        return (train_patterns, sax_train)
+
+    def resolve_pattern(self, pattern, use_unseen_mapping=True):
+        is_unseen = pattern not in self.train_pattern_set
+        mapped_pattern = pattern
+        distance = 0
+        if is_unseen and use_unseen_mapping:
+            mapped_pattern, distance = self.handle_unseen_pattern(pattern)
+        return (mapped_pattern, is_unseen, distance)
+
+    def calculate_levenshtein_distance(self, s1, s2):
+        if len(s1) < len(s2):
+            return self.calculate_levenshtein_distance(s2, s1)
+        if len(s2) == 0:
+            return len(s1)
+        previous_row = range(len(s2) + 1)
+        for i, c1 in enumerate(s1):
+            current_row = [i + 1]
+            for j, c2 in enumerate(s2):
+                insertions = previous_row[j + 1] + 1
+                deletions = current_row[j] + 1
+                substitutions = previous_row[j] + (c1 != c2)
+                current_row.append(min(insertions, deletions, substitutions))
+            previous_row = current_row
+        return previous_row[-1]
+
+    def handle_unseen_pattern(self, unseen_pattern):
+        closest_pattern = None
+        min_distance = float('inf')
+        for known_pattern in self.transition_probabilities.keys():
+            dist = self.calculate_levenshtein_distance(unseen_pattern, known_pattern)
+            if dist < min_distance:
+                min_distance = dist
+                closest_pattern = known_pattern
+            if min_distance == 0:
+                break
+        print(f"[Automata - Unseen] '{unseen_pattern}' -> '{closest_pattern}' ile eşleştirildi (Mesafe: {min_distance})")
+        return (closest_pattern, min_distance)
+
+    def evaluate_confidence(self, path_probability, threshold=None):
+        threshold = threshold or self.threshold
+        if path_probability < threshold:
+            return ('ANOMALY', path_probability)
+        return ('NORMAL', path_probability)
+
+    def calculate_path_probability(self, sequence_patterns):
+        if not sequence_patterns or len(sequence_patterns) < 2:
+            return (1.0, [])
+        path_prob = 1.0
+        transitions_made = []
+        for i in range(len(sequence_patterns) - 1):
+            current_state = sequence_patterns[i]
+            next_state = sequence_patterns[i + 1]
+            prob = self.get_transition_probability(current_state, next_state)
+            path_prob *= prob
+            transitions_made.append({'from': current_state, 'to': next_state, 'probability': round(prob, 4)})
+        return (path_prob, transitions_made)
+
+    def predict_from_pc1(self, pc1_data, labels, use_unseen_mapping=True):
+        paa_data = self.apply_paa(pc1_data)
+        sax_symbols = self.apply_sax(paa_data)
+        patterns = self.extract_patterns(sax_symbols, self.window_size)
+        if len(patterns) < 2:
+            return (np.array([]), np.array([]), np.array([]), [], {'unseen_count': 0, 'total_patterns': 0, 'detection_rate': 0.0, 'mapping_accuracy': 0.0})
+        label_offset = self.window_size - 1
+        y_true = []
+        y_pred = []
+        anomaly_scores = []
+        explanations = []
+        unseen_count = 0
+        mapping_scores = []
+        unseen_anomaly_hits = 0
+        for idx in range(1, len(patterns)):
+            prev_pattern, _, _ = self.resolve_pattern(patterns[idx - 1], use_unseen_mapping)
+            current_pattern, is_unseen, distance = self.resolve_pattern(patterns[idx], use_unseen_mapping)
+            if is_unseen:
+                unseen_count += 1
+                mapping_scores.append(max(0.0, 1.0 - distance / self.window_size))
+            mapped_current = current_pattern if is_unseen else patterns[idx]
+            path_prob, transitions = self.calculate_path_probability([prev_pattern, mapped_current])
+            decision, confidence = self.evaluate_confidence(path_prob)
+            if is_unseen and decision == 'ANOMALY':
+                unseen_anomaly_hits += 1
+            label_index = min(idx + label_offset, len(labels) - 1)
+            y_true.append(int(labels[label_index]))
+            y_pred.append(1 if decision == 'ANOMALY' else 0)
+            anomaly_scores.append(1.0 - path_prob)
+            explanations.append(self.generate_explanation_json(time_step=idx, current_state=prev_pattern, incoming_pattern=patterns[idx], is_unseen=is_unseen, mapped_state=mapped_current, path_prob=path_prob, decision=decision, transitions=transitions, distance=distance if is_unseen else 0, confidence=confidence))
+        evaluated = max(len(patterns) - 1, 1)
+        unseen_stats = {'unseen_count': unseen_count, 'total_patterns': len(patterns), 'unseen_ratio': round(unseen_count / max(len(patterns), 1), 4), 'detection_rate': round(unseen_count / evaluated, 4), 'mapping_accuracy': round(float(np.mean(mapping_scores)), 4) if mapping_scores else 1.0, 'unseen_anomaly_detection_rate': round(unseen_anomaly_hits / max(unseen_count, 1), 4) if unseen_count else 0.0}
+        return (np.array(y_true), np.array(y_pred), np.array(anomaly_scores), explanations, unseen_stats)
+
+    def evaluate_metrics(self, y_true, y_pred):
+        if len(y_true) == 0:
+            return {'Accuracy': 0.0, 'Precision': 0.0, 'Recall': 0.0, 'F1_Score': 0.0}
+        return {'Accuracy': float(accuracy_score(y_true, y_pred)), 'Precision': float(precision_score(y_true, y_pred, zero_division=0)), 'Recall': float(recall_score(y_true, y_pred, zero_division=0)), 'F1_Score': float(f1_score(y_true, y_pred, zero_division=0))}
+
+    def generate_explanation_json(self, time_step, current_state, incoming_pattern, is_unseen, mapped_state, path_prob, decision, transitions=None, distance=0, confidence=None):
+        confidence_label = 'low' if decision == 'ANOMALY' else 'high'
+        return {'time_step': time_step, 'state': current_state, 'pattern': incoming_pattern, 'status': 'unseen' if is_unseen else 'known', 'mapped_to': mapped_state if is_unseen else incoming_pattern, 'distance': distance, 'transitions': transitions or [], 'probability': round(path_prob, 4), 'confidence': round(float(confidence), 4) if confidence is not None else None, 'confidence_label': confidence_label, 'decision': decision.lower()}
+
+    def analyze_counterfactual(self, current_state, original_pattern, alternative_pattern):
+        print(f"\n[Counterfactual Analysis] Orijinal: '{original_pattern}' | Alternatif: '{alternative_pattern}'")
+        prob_orig, _ = self.calculate_path_probability([current_state, original_pattern])
+        decision_orig, conf_orig = self.evaluate_confidence(prob_orig)
+        prob_alt, _ = self.calculate_path_probability([current_state, alternative_pattern])
+        decision_alt, conf_alt = self.evaluate_confidence(prob_alt)
+        print(f' -> Orijinal Karar: {decision_orig} (Güven: {conf_orig})')
+        print(f' -> Alternatif Karar: {decision_alt} (Güven: {conf_alt})')
+        return {'original_decision': decision_orig, 'alternative_decision': decision_alt, 'probability_change': round(prob_alt - prob_orig, 4)}
+
+================================================================================
+DOSYA: src/models/deep_learning.py
+================================================================================
+import tensorflow as tf
+from tensorflow.keras import layers, models
+
+class CNN1DAnomalyDetector:
+
+    def __init__(self, config, seq_len, n_features):
+        self.config = config
+        self.seq_len = seq_len
+        self.n_features = n_features
+        self.learning_rate = config['deep_learning']['learning_rate']
+        self.model = self._build_model()
+
+    def _build_model(self):
+        print('[CNN-1D] Model mimarisi inşa ediliyor...')
+        model = models.Sequential(name='CNN1D_Autoencoder')
+        model.add(layers.Input(shape=(self.seq_len, self.n_features)))
+        model.add(layers.Conv1D(filters=32, kernel_size=3, padding='same', activation='relu'))
+        model.add(layers.Conv1D(filters=16, kernel_size=3, padding='same', activation='relu'))
+        model.add(layers.Conv1D(filters=8, kernel_size=3, padding='same', activation='relu'))
+        model.add(layers.Conv1D(filters=16, kernel_size=3, padding='same', activation='relu'))
+        model.add(layers.Conv1D(filters=32, kernel_size=3, padding='same', activation='relu'))
+        model.add(layers.Conv1D(filters=self.n_features, kernel_size=3, padding='same', activation='linear'))
+        optimizer = tf.keras.optimizers.Adam(learning_rate=self.learning_rate)
+        model.compile(optimizer=optimizer, loss='mse')
+        return model
+
+    def summary(self):
+        self.model.summary()
+
+class LSTMAnomalyDetector:
+
+    def __init__(self, config, seq_len, n_features):
+        self.config = config
+        self.seq_len = seq_len
+        self.n_features = n_features
+        self.learning_rate = config['deep_learning']['learning_rate']
+        self.model = self._build_model()
+
+    def _build_model(self):
+        print('[LSTM] Model mimarisi inşa ediliyor...')
+        model = models.Sequential(name='LSTM_Autoencoder')
+        model.add(layers.Input(shape=(self.seq_len, self.n_features)))
+        model.add(layers.LSTM(64, activation='relu', return_sequences=True))
+        model.add(layers.LSTM(32, activation='relu', return_sequences=False))
+        model.add(layers.RepeatVector(self.seq_len))
+        model.add(layers.LSTM(32, activation='relu', return_sequences=True))
+        model.add(layers.LSTM(64, activation='relu', return_sequences=True))
+        model.add(layers.TimeDistributed(layers.Dense(self.n_features)))
+        optimizer = tf.keras.optimizers.Adam(learning_rate=self.learning_rate)
+        model.compile(optimizer=optimizer, loss='mse')
+        return model
+
+    def summary(self):
+        self.model.summary()
+
+class GRUAnomalyDetector:
+
+    def __init__(self, config, seq_len, n_features):
+        self.config = config
+        self.seq_len = seq_len
+        self.n_features = n_features
+        self.learning_rate = config['deep_learning']['learning_rate']
+        self.model = self._build_model()
+
+    def _build_model(self):
+        print('[GRU] Model mimarisi inşa ediliyor...')
+        model = models.Sequential(name='GRU_Autoencoder')
+        model.add(layers.Input(shape=(self.seq_len, self.n_features)))
+        model.add(layers.GRU(64, activation='relu', return_sequences=True))
+        model.add(layers.GRU(32, activation='relu', return_sequences=False))
+        model.add(layers.RepeatVector(self.seq_len))
+        model.add(layers.GRU(32, activation='relu', return_sequences=True))
+        model.add(layers.GRU(64, activation='relu', return_sequences=True))
+        model.add(layers.TimeDistributed(layers.Dense(self.n_features)))
+        optimizer = tf.keras.optimizers.Adam(learning_rate=self.learning_rate)
+        model.compile(optimizer=optimizer, loss='mse')
+        return model
+
+    def summary(self):
+        self.model.summary()
+
+================================================================================
+DOSYA: src/models/trainer.py
+================================================================================
+import time
+
+class ModelTrainer:
+
+    def __init__(self, config, compiled_model):
+        self.config = config
+        self.model = compiled_model.model if hasattr(compiled_model, 'model') else compiled_model
+        self.epochs = self.config['deep_learning']['epochs']
+        self.batch_size = self.config['deep_learning']['batch_size']
+
+    def setup_training(self):
+        print(f'\n[Trainer] {self.model.name} için eğitim hazırlığı tamamlandı.')
+        print(f'[Trainer] Hedef Epoch: {self.epochs} | Batch Size: {self.batch_size}')
+
+    def train(self, X_train, X_val):
+        from tensorflow.keras.callbacks import EarlyStopping
+        patience = self.config['deep_learning']['early_stopping_patience']
+        early_stopping = EarlyStopping(monitor='val_loss', patience=patience, restore_best_weights=True, verbose=1)
+        print(f'[Trainer] {self.model.name} eğitimi başlatılıyor... (Early Stopping Patience: {patience})')
+        start = time.perf_counter()
+        history = self.model.fit(X_train, X_train, epochs=self.epochs, batch_size=self.batch_size, validation_data=(X_val, X_val), callbacks=[early_stopping], shuffle=False, verbose=1)
+        train_time = round(time.perf_counter() - start, 4)
+        print(f'[Trainer] {self.model.name} eğitimi tamamlandı. ({train_time:.2f} sn)')
+        return (history, train_time)
+
+================================================================================
+DOSYA: src/pipeline.py
+================================================================================
+import time
+import numpy as np
+from src.models.automata import ProbabilisticAutomata
+from src.models.deep_learning import CNN1DAnomalyDetector, GRUAnomalyDetector, LSTMAnomalyDetector
+from src.models.trainer import ModelTrainer
+from src.preprocessing.data_loader import DataLoader
+from src.preprocessing.noise_injector import NoiseInjector
+from src.preprocessing.preprocessor import Preprocessor
+from src.preprocessing.sax_converter import SAXConverter
+from src.utils.analyzer import ParameterAnalyzer
+from src.utils.logger import ExperimentLogger
+from src.utils.seed_manager import set_deterministic_seed
+from src.utils.sequence_builder import create_sequences, predict_with_threshold, threshold_from_validation
+from src.utils.statistics import StatisticalAnalyzer
+from src.utils.visualizer import Visualizer
+
+class Pipeline:
+    SCENARIOS = ('original', 'noisy', 'unseen')
+    DL_MODELS = ('LSTM', 'GRU', 'CNN1D')
+    MODELS = ('LSTM', 'GRU', 'CNN1D', 'Automata')
+
+    def __init__(self, config):
+        self.config = config
+        self.group_id = self.config['project']['group_id']
+        self.datasets = self.config['project']['datasets']
+        self.seq_len = self.config['deep_learning']['sequence_length']
+        self.threshold_percentile = self.config['deep_learning']['anomaly_threshold_percentile']
+        quick = self.config.get('quick_test', {})
+        if quick.get('enabled', False):
+            self.random_seeds = quick.get('seeds', [42])
+            self.skab_cv_folds = quick.get('skab_folds', 2)
+            self.config['deep_learning']['epochs'] = quick.get('epochs', 3)
+            print('[Pipeline] quick_test modu aktif.')
+        else:
+            self.random_seeds = self.config['experiment_settings']['random_seeds']
+            self.skab_cv_folds = self.config['experiment_settings'].get('skab_cv_folds', 5)
+        self.data_loader = DataLoader(config)
+        self.noise_injector = NoiseInjector(config)
+        self.visualizer = Visualizer(config)
+        self.stat_analyzer = StatisticalAnalyzer()
+        self.logger = ExperimentLogger(config)
+        self.skab_seed_metrics = {model: [] for model in self.MODELS}
+        self.batadal_seed_metrics = {model: [] for model in self.MODELS}
+        self.skab_fold_metrics = {model: {s: [] for s in self.SCENARIOS} for model in self.MODELS}
+        self.scenario_metrics = {dataset: {s: [] for s in self.SCENARIOS} for dataset in self.datasets}
+        self._parameter_contexts = {}
+        self._batadal_predictions_by_seed = {}
+
+    def run(self):
+        print(f"\n{'=' * 50}")
+        print(f'--- {self.group_id}. Grup Pipeline Akışı Başlıyor ---')
+        print(f"{'=' * 50}")
+        for dataset_name in self.datasets:
+            self._run_dataset(dataset_name)
+        self._run_statistical_analysis()
+        self._run_parameter_analysis()
+        self._save_summary()
+        print('\n--- Pipeline Akışı Başarıyla Tamamlandı ---\n')
+
+    def _run_dataset(self, dataset_name):
+        df = self.data_loader.load_data(dataset_name)
+        if df is None:
+            print(f'[Pipeline] {dataset_name} verisi bulunamadı, atlanıyor.')
+            return
+        label_col = self.data_loader.detect_label_column(df, dataset_name)
+        feature_cols = self.data_loader.get_feature_columns(df, label_col)
+        df = self.data_loader.handle_missing_values(df, feature_cols, label_col)
+        self.logger.log_dataset_info(dataset_name, {'label_column': label_col, 'feature_count': len(feature_cols), 'feature_columns': feature_cols, 'row_count': len(df)})
+        print(f'[Pipeline] {dataset_name} etiket sütunu: {label_col}')
+        if dataset_name == 'SKAB':
+            self._run_skab_groupkfold(df, feature_cols, label_col)
+        else:
+            self._run_batadal_chronological(df, feature_cols, label_col)
+
+    def _run_skab_groupkfold(self, df, feature_cols, label_col):
+        folds = self.data_loader.get_group_kfold_splits(df, label_col, n_splits=self.skab_cv_folds)
+        for seed in self.random_seeds:
+            print(f'\n>>> [SKAB] Seed {seed} <<<')
+            set_deterministic_seed(seed)
+            seed_fold_f1 = {model: [] for model in self.MODELS}
+            for fold_data in folds:
+                fold_idx = fold_data['fold']
+                context = self._build_context('SKAB', seed, fold_idx, fold_data['train'], fold_data['val'], fold_data['test'], feature_cols, label_col)
+                if 'SKAB' not in self._parameter_contexts:
+                    self._parameter_contexts['SKAB'] = context
+                fold_results = self._run_fold_scenarios(context)
+                for model in seed_fold_f1:
+                    seed_fold_f1[model].append(fold_results[model]['original']['F1_Score'])
+            for model, scores in seed_fold_f1.items():
+                if scores:
+                    self.skab_seed_metrics[model].append(float(np.mean(scores)))
+                    self.logger.log_aggregated_metrics(f'SKAB_seed_{seed}_{model}_fold_mean_f1', self.stat_analyzer.calculate_numeric_mean_std(scores))
+
+    def _run_batadal_chronological(self, df, feature_cols, label_col):
+        for seed in self.random_seeds:
+            print(f'\n>>> [BATADAL] Seed {seed} <<<')
+            set_deterministic_seed(seed)
+            train_df, val_df, test_df = self.data_loader.split_data(df, 'BATADAL')
+            context = self._build_context('BATADAL', seed, None, train_df, val_df, test_df, feature_cols, label_col)
+            if 'BATADAL' not in self._parameter_contexts:
+                self._parameter_contexts['BATADAL'] = context
+            self._batadal_predictions_by_seed[seed] = {}
+            self._run_fold_scenarios(context)
+
+    def _build_context(self, dataset_name, seed, fold_idx, train_df, val_df, test_df, feature_cols, label_col):
+        return {'dataset_name': dataset_name, 'seed': seed, 'fold_idx': fold_idx, 'train_df': train_df, 'val_df': val_df, 'test_df': test_df, 'feature_cols': feature_cols, 'label_col': label_col}
+
+    def _apply_scenario_to_frames(self, context, scenario):
+        train_df = context['train_df'].copy()
+        val_df = context['val_df'].copy()
+        test_df = context['test_df'].copy()
+        feature_cols = context['feature_cols']
+        if scenario == 'noisy':
+            for frame in (train_df, val_df, test_df):
+                frame[feature_cols] = self.noise_injector.inject_noise(frame[feature_cols].values)
+        return (train_df, val_df, test_df)
+
+    def _preprocess_frames(self, train_df, val_df, test_df, feature_cols, label_col):
+        preprocessor = Preprocessor()
+        train_scaled, val_scaled, test_scaled, used_features = preprocessor.normalize(train_df, val_df, test_df, feature_cols)
+        train_pc1, val_pc1, test_pc1 = preprocessor.apply_pca(train_scaled, val_scaled, test_scaled, used_features)
+        return {'train_scaled': train_scaled, 'val_scaled': val_scaled, 'test_scaled': test_scaled, 'feature_cols': used_features, 'train_pc1': train_pc1, 'val_pc1': val_pc1, 'test_pc1': test_pc1, 'train_labels': train_df[label_col].values, 'val_labels': val_df[label_col].values, 'test_labels': test_df[label_col].values}
+
+    def _run_fold_scenarios(self, context):
+        scenario_results = {model: {} for model in self.MODELS}
+        for scenario in self.SCENARIOS:
+            print(f"\n[Pipeline] Senaryo: {scenario.upper()} | {context['dataset_name']} | Seed: {context['seed']}")
+            train_df, val_df, test_df = self._apply_scenario_to_frames(context, scenario)
+            processed = self._preprocess_frames(train_df, val_df, test_df, context['feature_cols'], context['label_col'])
+            if scenario == 'unseen':
+                print('[Pipeline] Unseen senaryosu: otomata odaklı, DL atlanıyor.')
+                dl_results = {m: self._empty_metrics() for m in self.DL_MODELS}
+            else:
+                dl_results = self._run_deep_learning(context, scenario, processed)
+            automata_results, unseen_stats = self._run_automata(context, scenario, processed)
+            for model in self.DL_MODELS:
+                scenario_results[model][scenario] = dl_results[model]
+            scenario_results['Automata'][scenario] = automata_results
+            summary = {model: dl_results[model] for model in self.DL_MODELS}
+            summary['Automata'] = automata_results
+            summary['unseen_stats'] = unseen_stats
+            self.logger.log_scenario_summary(context['dataset_name'], context['seed'], scenario, summary)
+            self.scenario_metrics[context['dataset_name']][scenario].append(automata_results)
+        return scenario_results
+
+    def _empty_metrics(self):
+        return {'Accuracy': 0.0, 'Precision': 0.0, 'Recall': 0.0, 'F1_Score': 0.0}
+
+    def _run_deep_learning(self, context, scenario, processed):
+        results = {}
+        dataset_name = context['dataset_name']
+        train_x = processed['train_scaled'][processed['feature_cols']].values
+        val_x = processed['val_scaled'][processed['feature_cols']].values
+        test_x = processed['test_scaled'][processed['feature_cols']].values
+        x_train, _ = create_sequences(train_x, processed['train_labels'], self.seq_len)
+        x_val, _ = create_sequences(val_x, processed['val_labels'], self.seq_len)
+        x_test, y_test = create_sequences(test_x, processed['test_labels'], self.seq_len)
+        if len(x_train) == 0 or len(x_test) == 0:
+            return {m: self._empty_metrics() for m in self.DL_MODELS}
+        n_features = x_train.shape[2]
+        builders = {'LSTM': LSTMAnomalyDetector, 'GRU': GRUAnomalyDetector, 'CNN1D': CNN1DAnomalyDetector}
+        for model_name, builder in builders.items():
+            detector = builder(self.config, self.seq_len, n_features)
+            trainer = ModelTrainer(self.config, detector)
+            trainer.setup_training()
+            _, train_time = trainer.train(x_train, x_val)
+            threshold = threshold_from_validation(detector.model, x_val, self.threshold_percentile)
+            y_pred, scores, inference_time = predict_with_threshold(detector.model, x_test, threshold)
+            metrics = self._compute_metrics(y_test, y_pred)
+            metric_key = self._metric_key(context, model_name, scenario)
+            self.logger.log_metrics(metric_key, metrics)
+            self._record_metrics(context, model_name, scenario, metrics)
+            self.logger.log_runtime_record(self._runtime_record(context, model_name, scenario, train_time, inference_time))
+            safe_key = metric_key.replace(' ', '_')
+            self.visualizer.plot_confusion_matrix(y_test, y_pred, safe_key)
+            self.visualizer.plot_roc_curve(y_test, scores, safe_key)
+            self.visualizer.plot_pr_curve(y_test, scores, safe_key)
+            if dataset_name == 'BATADAL' and scenario == 'original':
+                self._batadal_predictions_by_seed[context['seed']][model_name] = (y_test.copy(), y_pred.copy())
+                self.logger.log_batadal_test_result(context['seed'], scenario, model_name, metrics)
+            results[model_name] = metrics
+            print(f'[Pipeline] {model_name}/{scenario}: {metrics} | train={train_time:.2f}s, infer={inference_time:.2f}s')
+        return results
+
+    def _run_automata(self, context, scenario, processed):
+        sax_converter = SAXConverter(self.config)
+        sax_converter.fit_transform(processed['train_pc1'])
+        automata = ProbabilisticAutomata(self.config, sax_converter)
+        train_start = time.perf_counter()
+        automata.fit(processed['train_pc1'])
+        train_time = round(time.perf_counter() - train_start, 4)
+        infer_start = time.perf_counter()
+        y_true, y_pred, scores, explanations, unseen_stats = automata.predict_from_pc1(processed['test_pc1'], processed['test_labels'], use_unseen_mapping=True)
+        inference_time = round(time.perf_counter() - infer_start, 4)
+        metrics = automata.evaluate_metrics(y_true, y_pred)
+        metric_key = self._metric_key(context, 'Automata', scenario)
+        self.logger.log_metrics(metric_key, metrics)
+        self._record_metrics(context, 'Automata', scenario, metrics)
+        self.logger.log_runtime_record(self._runtime_record(context, 'Automata', scenario, train_time, inference_time))
+        self.logger.log_unseen_analysis(self._unseen_record(context, scenario, metrics, unseen_stats))
+        max_logs = self.config['explainability'].get('max_logged_decisions', 50)
+        for explanation in explanations[:max_logs]:
+            self.logger.log_explainability(explanation)
+        safe_key = metric_key.replace(' ', '_')
+        self.visualizer.plot_confusion_matrix(y_true, y_pred, safe_key)
+        if len(y_true) > 0 and len(np.unique(y_true)) > 1:
+            self.visualizer.plot_roc_curve(y_true, scores, safe_key)
+            self.visualizer.plot_pr_curve(y_true, scores, safe_key)
+        viz_suffix = f"_{context['dataset_name']}_seed{context['seed']}"
+        if scenario == 'original':
+            self.visualizer.plot_transition_heatmap(automata.transition_probabilities, suffix=viz_suffix)
+            self.visualizer.plot_state_diagram(automata.transition_probabilities, suffix=viz_suffix)
+        if scenario == 'unseen' and explanations:
+            sample = next((e for e in explanations if e['status'] == 'unseen'), explanations[0])
+            automata.analyze_counterfactual(sample['state'], sample['pattern'], sample['mapped_to'])
+        if context['dataset_name'] == 'BATADAL':
+            self.logger.log_batadal_test_result(context['seed'], scenario, 'Automata', metrics)
+            if scenario == 'original' and len(y_true) > 0:
+                self._batadal_predictions_by_seed[context['seed']]['Automata'] = (y_true.copy(), y_pred.copy())
+        print(f'[Pipeline] Automata/{scenario}: {metrics} | unseen={unseen_stats}')
+        return (metrics, unseen_stats)
+
+    def _record_metrics(self, context, model_name, scenario, metrics):
+        dataset_name = context['dataset_name']
+        fold_idx = context['fold_idx']
+        if dataset_name == 'SKAB' and fold_idx is not None:
+            self.logger.log_fold_metrics(dataset_name, fold_idx, model_name, scenario, metrics)
+            self.skab_fold_metrics[model_name][scenario].append(metrics['F1_Score'])
+        elif dataset_name == 'BATADAL' and scenario == 'original':
+            self.batadal_seed_metrics[model_name].append(metrics['F1_Score'])
+
+    def _metric_key(self, context, model_name, scenario):
+        parts = [context['dataset_name'], f"seed_{context['seed']}"]
+        if context['fold_idx'] is not None:
+            parts.append(f"fold_{context['fold_idx']}")
+        parts.extend([model_name, scenario])
+        return '_'.join(parts)
+
+    def _runtime_record(self, context, model_name, scenario, train_time, inference_time):
+        record = {'Dataset': context['dataset_name'], 'Seed': context['seed'], 'Scenario': scenario, 'Model': model_name, 'Training_Time_sec': train_time, 'Inference_Time_sec': inference_time}
+        if context['fold_idx'] is not None:
+            record['Fold'] = context['fold_idx']
+        return record
+
+    def _unseen_record(self, context, scenario, metrics, unseen_stats):
+        record = {'Dataset': context['dataset_name'], 'Seed': context['seed'], 'Scenario': scenario, 'Model': 'Automata', 'F1_Score': metrics['F1_Score'], 'Detection_Rate': unseen_stats.get('detection_rate', 0.0), 'Mapping_Accuracy': unseen_stats.get('mapping_accuracy', 0.0), 'Unseen_Count': unseen_stats.get('unseen_count', 0), 'Total_Patterns': unseen_stats.get('total_patterns', 0)}
+        if context['fold_idx'] is not None:
+            record['Fold'] = context['fold_idx']
+        return record
+
+    def _compute_metrics(self, y_true, y_pred):
+        from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+        return {'Accuracy': float(accuracy_score(y_true, y_pred)), 'Precision': float(precision_score(y_true, y_pred, zero_division=0)), 'Recall': float(recall_score(y_true, y_pred, zero_division=0)), 'F1_Score': float(f1_score(y_true, y_pred, zero_division=0))}
+
+    def _run_statistical_analysis(self):
+        print('\n[Pipeline] İstatistiksel analiz başlatılıyor...')
+        for dataset_prefix, seed_metrics in (('SKAB', self.skab_seed_metrics), ('BATADAL', self.batadal_seed_metrics)):
+            for model_name, scores in seed_metrics.items():
+                if not scores:
+                    continue
+                agg = self.stat_analyzer.calculate_mean_and_std([{'F1_Score': s} for s in scores])
+                key = f'{dataset_prefix}_{model_name}_seed_f1_summary'
+                self.logger.log_aggregated_metrics(key, agg)
+                print(f'[Pipeline] {key}: {agg}')
+        for model_name, scenario_dict in self.skab_fold_metrics.items():
+            for scenario, scores in scenario_dict.items():
+                if not scores:
+                    continue
+                agg = self.stat_analyzer.calculate_numeric_mean_std(scores)
+                key = f'SKAB_{model_name}_{scenario}_fold_f1_summary'
+                self.logger.log_aggregated_metrics(key, agg)
+                print(f'[Pipeline] {key}: {agg}')
+        for dataset_prefix, seed_metrics in (('SKAB', self.skab_seed_metrics), ('BATADAL', self.batadal_seed_metrics)):
+            comparisons = [('LSTM', 'GRU'), ('LSTM', 'CNN1D'), ('GRU', 'CNN1D'), ('LSTM', 'Automata'), ('GRU', 'Automata'), ('CNN1D', 'Automata')]
+            for name_a, name_b in comparisons:
+                scores_a = seed_metrics[name_a]
+                scores_b = seed_metrics[name_b]
+                if len(scores_a) >= 2 and len(scores_b) >= 2:
+                    result = self.stat_analyzer.run_wilcoxon_test(scores_a, scores_b, label=f'{dataset_prefix}_{name_a}_vs_{name_b}')
+                    self.logger.log_statistical_test(result)
+        mcnemar_pairs = [('LSTM', 'GRU'), ('LSTM', 'CNN1D'), ('GRU', 'CNN1D'), ('LSTM', 'Automata'), ('GRU', 'Automata'), ('CNN1D', 'Automata')]
+        for seed, preds in self._batadal_predictions_by_seed.items():
+            for name_a, name_b in mcnemar_pairs:
+                if name_a in preds and name_b in preds:
+                    y_true, y_pred_a = preds[name_a]
+                    _, y_pred_b = preds[name_b]
+                    result = self.stat_analyzer.run_mcnemar_test(y_true, y_pred_a, y_pred_b, label=f'BATADAL_seed_{seed}_{name_a}_vs_{name_b}')
+                    self.logger.log_statistical_test(result)
+
+    def _run_parameter_analysis(self):
+        if not self._parameter_contexts:
+            print('[Pipeline] Parametre analizi atlanıyor (bağlam yok).')
+            return
+        all_results = []
+        for dataset_name, context in self._parameter_contexts.items():
+            print(f'\n[Pipeline] Parametre duyarlılık analizi: {dataset_name}')
+            train_df, val_df, test_df = self._apply_scenario_to_frames(context, 'original')
+            processed = self._preprocess_frames(train_df, val_df, test_df, context['feature_cols'], context['label_col'])
+            sax_converter = SAXConverter(self.config)
+            sax_converter.fit_transform(processed['train_pc1'])
+            automata = ProbabilisticAutomata(self.config, sax_converter)
+            suffix = f'_{dataset_name.lower()}'
+            param_analyzer = ParameterAnalyzer(self.config, automata)
+            window_results = param_analyzer.analyze_window_size(processed['train_pc1'], processed['test_pc1'], processed['test_labels'], sax_converter)
+            alphabet_results = param_analyzer.analyze_alphabet_size(processed['train_pc1'], processed['test_pc1'], processed['test_labels'], SAXConverter)
+            for row in window_results + alphabet_results:
+                row['Dataset'] = dataset_name
+            all_results.extend(window_results + alphabet_results)
+            param_analyzer.export_analysis_to_table(window_results + alphabet_results, filepath=f'logs/parameter_analysis_{dataset_name.lower()}.csv')
+            self.visualizer.plot_parameter_sensitivity(window_results, 'Value', 'State_Count', f'{dataset_name} Window Size vs State Count', suffix=suffix)
+            self.visualizer.plot_parameter_sensitivity(window_results, 'Value', 'F1_Score', f'{dataset_name} Window Size vs F1 Score', suffix=suffix)
+            self.visualizer.plot_parameter_sensitivity(window_results, 'Value', 'Transition_Density', f'{dataset_name} Window Size vs Transition Density', suffix=suffix)
+            self.visualizer.plot_parameter_sensitivity(alphabet_results, 'Value', 'State_Count', f'{dataset_name} Alphabet Size vs State Count', suffix=suffix)
+            self.visualizer.plot_parameter_sensitivity(alphabet_results, 'Value', 'F1_Score', f'{dataset_name} Alphabet Size vs F1 Score', suffix=suffix)
+            self.visualizer.plot_parameter_sensitivity(alphabet_results, 'Value', 'Transition_Density', f'{dataset_name} Alphabet Size vs Transition Density', suffix=suffix)
+        self.logger.log_parameter_analysis(all_results)
+
+    def _save_summary(self):
+        self.logger.save()
+        self.logger.export_summary_csv()
+        self.logger.export_explainability()
+        self.logger.export_runtime_csv()
+        self.logger.export_unseen_analysis_csv()
+        self._export_runtime_summary()
+        self._export_unseen_summary_table()
+        print(f'\n[Pipeline] Deney logları: {self.logger.log_file}')
+
+    def _export_runtime_summary(self):
+        import pandas as pd
+        rows = self.logger.results.get('runtime_records', [])
+        if not rows:
+            return
+        df = pd.DataFrame(rows)
+        summary = df.groupby('Model')[['Training_Time_sec', 'Inference_Time_sec']].mean().round(2).reset_index()
+        summary.columns = ['Model', 'Training_Time_sec', 'Inference_Time_sec']
+        path = 'logs/runtime_summary.csv'
+        summary.to_csv(path, index=False)
+        self.logger.log_aggregated_metrics('runtime_summary', summary.to_dict('records'))
+        print(f'[Pipeline] Runtime özeti kaydedildi: {path}')
+
+    def _export_unseen_summary_table(self):
+        import pandas as pd
+        rows = self.logger.results.get('unseen_analysis', [])
+        if not rows:
+            return
+        df = pd.DataFrame(rows)
+        summary_rows = []
+        for dataset in df['Dataset'].unique():
+            sub = df[df['Dataset'] == dataset]
+            original = sub[sub['Scenario'] == 'original']['F1_Score']
+            noisy = sub[sub['Scenario'] == 'noisy']['F1_Score']
+            unseen = sub[sub['Scenario'] == 'unseen']['F1_Score']
+            unseen_rows = sub[sub['Scenario'] == 'unseen']
+            summary_rows.append({'Dataset': dataset, 'Model': 'Automata', 'F1_Original': round(original.mean(), 4) if len(original) else None, 'F1_Noisy': round(noisy.mean(), 4) if len(noisy) else None, 'F1_Unseen': round(unseen.mean(), 4) if len(unseen) else None, 'Detection_Rate': round(unseen_rows['Detection_Rate'].mean(), 4) if len(unseen_rows) else round(sub['Detection_Rate'].mean(), 4), 'Mapping_Accuracy': round(sub['Mapping_Accuracy'].mean(), 4)})
+        summary = pd.DataFrame(summary_rows)
+        path = 'logs/unseen_summary.csv'
+        summary.to_csv(path, index=False)
+        print(f'[Pipeline] Unseen özet tablosu kaydedildi: {path}')
+
+================================================================================
+DOSYA: src/preprocessing/__init__.py
+================================================================================
+
+
+================================================================================
+DOSYA: src/preprocessing/data_loader.py
+================================================================================
+import glob
+import os
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import GroupKFold, StratifiedGroupKFold
+
+class DataLoader:
+    METADATA_COLS = {'datetime', 'changepoint', 'source_group', 'source_file'}
+    LABEL_CANDIDATES = ['anomaly', 'attack', 'att_flag', 'label', 'is_anomaly', 'is_attack']
+    TIME_CANDIDATES = ['datetime', 'timestamp', 'date', 'time', 'datenum']
+
+    def __init__(self, config):
+        self.config = config
+        self.raw_path = self._resolve_path(config['paths']['raw_data'])
+        self.datasets = config['project']['datasets']
+        self.skab_folders = config['paths'].get('skab_subfolders', ['valve1', 'valve2'])
+
+    @staticmethod
+    def _resolve_path(path):
+        if os.path.isabs(path):
+            return path
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        return os.path.normpath(os.path.join(project_root, path))
+
+    @staticmethod
+    def _read_csv(file_path):
+        for sep in (';', ','):
+            try:
+                df = pd.read_csv(file_path, sep=sep)
+                if len(df.columns) > 1:
+                    return df
+            except Exception:
+                continue
+        return pd.read_csv(file_path)
+
+    def load_data(self, dataset_name):
+        if dataset_name not in self.datasets:
+            raise ValueError(f"[Hata] {dataset_name} config'de tanımlı değil.")
+        print(f'\n[DataLoader] {dataset_name} veri seti yükleniyor...')
+        if dataset_name == 'SKAB':
+            return self._load_skab()
+        if dataset_name == 'BATADAL':
+            return self._load_batadal()
+        return None
+
+    def _load_skab(self):
+        all_data = []
+        skab_base_path = os.path.join(self.raw_path, 'SKAB')
+        for folder in self.skab_folders:
+            folder_path = os.path.join(skab_base_path, folder)
+            if not os.path.exists(folder_path):
+                print(f'[Uyarı] SKAB klasörü bulunamadı: {folder_path}. Lütfen data/raw/SKAB/{folder} dizinini oluşturun.')
+                continue
+            csv_files = sorted(glob.glob(os.path.join(folder_path, '*.csv')))
+            if not csv_files:
+                print(f'[Uyarı] {folder_path} içinde .csv dosyası yok.')
+                continue
+            for file_path in csv_files:
+                df = self._read_csv(file_path)
+                df['source_group'] = folder
+                df['source_file'] = os.path.basename(file_path)
+                all_data.append(df)
+                print(f'[DataLoader] SKAB dosyası yüklendi: {folder}/{os.path.basename(file_path)}')
+        if not all_data:
+            self._print_skab_setup_hint()
+            return None
+        combined_df = pd.concat(all_data, ignore_index=True)
+        file_count = combined_df['source_file'].nunique()
+        print(f'[DataLoader] SKAB birleştirildi. Boyut: {combined_df.shape}, dosya sayısı: {file_count}')
+        return combined_df
+
+    def _print_skab_setup_hint(self):
+        print('[Hata] SKAB verisi bulunamadı.')
+        print('Beklenen yapı:')
+        for folder in self.skab_folders:
+            print(f"  {os.path.join(self.raw_path, 'SKAB', folder)}/*.csv")
+        print('Hızlı test için: python scripts/generate_sample_data.py')
+
+    def _batadal_search_paths(self):
+        configured = self.config['paths'].get('batadal_file', 'batadal.csv')
+        file_names = [configured, 'Training Dataset 2.csv', 'Training_Dataset_2.csv', 'training_dataset_2.csv', 'BATADAL_dataset03.csv', 'BATADAL_dataset04.csv', 'batadal.csv']
+        seen = set()
+        search_dirs = [self.raw_path, os.path.join(self.raw_path, 'BATADAL')]
+        paths = []
+        for directory in search_dirs:
+            for file_name in file_names:
+                key = (directory, file_name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                paths.append(os.path.join(directory, file_name))
+        return paths
+
+    def _normalize_batadal_labels(self, df, label_col):
+        normalized = df.copy()
+        normalized[label_col] = normalized[label_col].replace(-999, 0)
+        normalized[label_col] = normalized[label_col].astype(int)
+        counts = normalized[label_col].value_counts().to_dict()
+        print(f'[DataLoader] BATADAL etiketleri normalize edildi (-999 -> 0). Dagilim: {counts}')
+        return normalized
+
+    def _validate_batadal_df(self, df, file_path):
+        label_col = self.detect_label_column(df, 'BATADAL')
+        labels = set(df[label_col].dropna().unique())
+        row_count = len(df)
+        file_name = os.path.basename(file_path)
+        if 'ATT_FLAG' not in df.columns.str.strip().tolist() and label_col.lower() != 'att_flag':
+            print(f'[Hata] {file_name} etiket sutunu yok; bu Test Dataset olabilir.')
+            return False
+        if labels == {-999} or labels == {-999, 1} or -999 in labels:
+            print(f'[DataLoader] {file_name} kismi etiketli Training Dataset 2 formatinda (-999 + 1). Bu resmi indirmede normaldir.')
+        if 1 not in labels:
+            print(f'[Hata] {file_name} saldiri etiketi (1) icermiyor. Training Dataset 1 veya yanlis dosya olabilir.')
+            return False
+        if row_count < 2000:
+            print(f'[Uyari] {file_name} satir sayisi beklenenden az ({row_count}).')
+        return True
+
+    def _load_batadal(self):
+        for file_path in self._batadal_search_paths():
+            if not os.path.exists(file_path):
+                continue
+            df = self._read_csv(file_path)
+            df.columns = df.columns.str.strip()
+            print(f'[DataLoader] BATADAL yüklendi: {file_path} (Boyut: {df.shape})')
+            if not self._validate_batadal_df(df, file_path):
+                continue
+            label_col = self.detect_label_column(df, 'BATADAL')
+            df = self._normalize_batadal_labels(df, label_col)
+            return df
+        print('[Hata] BATADAL dosyası bulunamadı.')
+        print('Beklenen konumlar (Training Dataset 2):')
+        for file_path in self._batadal_search_paths():
+            print(f'  {file_path}')
+        print('Hızlı test için: python scripts/generate_sample_data.py')
+        return None
+
+    def detect_label_column(self, df, dataset_name):
+        lower_map = {col.lower(): col for col in df.columns}
+        if dataset_name == 'SKAB' and 'anomaly' in lower_map:
+            return lower_map['anomaly']
+        for candidate in self.LABEL_CANDIDATES:
+            if candidate in lower_map:
+                return lower_map[candidate]
+        bool_cols = [col for col in df.columns if df[col].dropna().isin([0, 1]).all()]
+        if bool_cols:
+            return bool_cols[-1]
+        raise ValueError(f'[Hata] {dataset_name} için etiket sütunu tespit edilemedi.')
+
+    def get_feature_columns(self, df, label_col):
+        exclude = set(self.METADATA_COLS)
+        exclude.add(label_col.lower())
+        for col in df.columns:
+            if col.lower() in self.TIME_CANDIDATES:
+                exclude.add(col.lower())
+        feature_cols = []
+        for col in df.columns:
+            if col.lower() in exclude:
+                continue
+            if pd.api.types.is_numeric_dtype(df[col]):
+                feature_cols.append(col)
+        if not feature_cols:
+            raise ValueError('[Hata] Model girdisi için kullanılabilir sayısal sütun bulunamadı.')
+        return feature_cols
+
+    def handle_missing_values(self, df, feature_cols, label_col):
+        cleaned = df.copy()
+        subset = feature_cols + [label_col]
+        before = len(cleaned)
+        cleaned[subset] = cleaned[subset].replace([np.inf, -np.inf], np.nan)
+        cleaned[subset] = cleaned[subset].ffill()
+        cleaned = cleaned.dropna(subset=subset)
+        print(f'[DataLoader] Eksik veri işlendi. Kalan kayıt: {len(cleaned)} / {before}')
+        return cleaned.reset_index(drop=True)
+
+    def split_data(self, df, dataset_name):
+        if df is None:
+            return (None, None, None)
+        print(f'\n[DataLoader] {dataset_name} için veri bölme işlemi başlatılıyor...')
+        if dataset_name == 'BATADAL':
+            train_ratio = self.config['data_split']['train']
+            val_ratio = self.config['data_split']['validation']
+            total_len = len(df)
+            train_end = int(total_len * train_ratio)
+            val_end = train_end + int(total_len * val_ratio)
+            train_df = df.iloc[:train_end].copy()
+            val_df = df.iloc[train_end:val_end].copy()
+            test_df = df.iloc[val_end:].copy()
+            print(f'[DataLoader - BATADAL] Kronolojik Split -> Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}')
+            return (train_df, val_df, test_df)
+        if dataset_name == 'SKAB':
+            return self._split_skab_by_files(df)
+        return (None, None, None)
+
+    def _split_skab_by_files(self, df):
+        unique_files = np.array(sorted(df['source_file'].unique()))
+        train_ratio = self.config['data_split']['train']
+        val_ratio = self.config['data_split']['validation']
+        n_train = int(len(unique_files) * train_ratio)
+        n_val = int(len(unique_files) * val_ratio)
+        train_files = unique_files[:n_train]
+        val_files = unique_files[n_train:n_train + n_val]
+        test_files = unique_files[n_train + n_val:]
+        train_df = df[df['source_file'].isin(train_files)].copy()
+        val_df = df[df['source_file'].isin(val_files)].copy()
+        test_df = df[df['source_file'].isin(test_files)].copy()
+        print(f'[DataLoader - SKAB] Dosya Bazlı Split -> Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}')
+        return (train_df, val_df, test_df)
+
+    def get_group_kfold_splits(self, df, label_col, n_splits=None):
+        n_splits = n_splits or self.config['experiment_settings'].get('skab_cv_folds', 5)
+        groups = df['source_file'].values
+        y = df[label_col].values
+        cv_seed = self.config['experiment_settings'].get('cv_random_state', 42)
+        fold_train_ratio = self.config['data_split'].get('fold_train_ratio', 0.75)
+        splitter_cls = StratifiedGroupKFold
+        try:
+            splitter = splitter_cls(n_splits=n_splits, shuffle=True, random_state=cv_seed)
+            split_iter = splitter.split(df, y, groups=groups)
+        except Exception:
+            print("[Uyarı] StratifiedGroupKFold kullanılamadı, GroupKFold'a düşülüyor.")
+            splitter = GroupKFold(n_splits=n_splits)
+            split_iter = splitter.split(df, groups=groups)
+        folds = []
+        for fold_idx, (train_val_idx, test_idx) in enumerate(split_iter, start=1):
+            fold_df = df.iloc[train_val_idx].copy()
+            test_df = df.iloc[test_idx].copy()
+            unique_files = np.array(sorted(fold_df['source_file'].unique()))
+            n_train_files = max(1, int(len(unique_files) * fold_train_ratio))
+            train_files = unique_files[:n_train_files]
+            val_files = unique_files[n_train_files:]
+            if len(val_files) == 0 and len(train_files) > 1:
+                val_files = train_files[-1:]
+                train_files = train_files[:-1]
+            train_df = fold_df[fold_df['source_file'].isin(train_files)].copy()
+            val_df = fold_df[fold_df['source_file'].isin(val_files)].copy()
+            folds.append({'fold': fold_idx, 'train': train_df.reset_index(drop=True), 'val': val_df.reset_index(drop=True), 'test': test_df.reset_index(drop=True)})
+        print(f'[DataLoader - SKAB] GroupKFold -> {len(folds)} fold oluşturuldu.')
+        return folds
+
+================================================================================
+DOSYA: src/preprocessing/noise_injector.py
+================================================================================
+import numpy as np
+
+class NoiseInjector:
+
+    def __init__(self, config):
+        self.noise_config = config['experiment_settings']['noise_injection']
+        self.mean = self.noise_config['mean']
+        self.std_dev = self.noise_config['std_dev']
+
+    def inject_noise(self, data):
+        if data is None:
+            return None
+        print(f'[NoiseInjector] Veriye Gaussian Noise ekleniyor (Ortalama: {self.mean}, Std Sapma: {self.std_dev})')
+        noise = np.random.normal(self.mean, self.std_dev, data.shape)
+        noisy_data = data + noise
+        return noisy_data
+
+================================================================================
+DOSYA: src/preprocessing/preprocessor.py
+================================================================================
+import pandas as pd
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+
+class Preprocessor:
+    EXCLUDE_KEYWORDS = {'label', 'attack', 'is_anomaly', 'is_attack', 'anomaly', 'att_flag', 'timestamp', 'datetime', 'changepoint', 'source_group', 'source_file', 'date', 'time', 'datenum'}
+
+    def __init__(self):
+        self.scaler = StandardScaler()
+        self.pca = None
+
+    def _resolve_feature_columns(self, train_df, feature_cols=None):
+        if feature_cols is not None:
+            return list(feature_cols)
+        numeric_cols = train_df.select_dtypes(include=['float64', 'int64', 'float32', 'int32']).columns
+        return [col for col in numeric_cols if col.lower() not in self.EXCLUDE_KEYWORDS]
+
+    def normalize(self, train_df, val_df, test_df, feature_cols=None):
+        print('\n[Preprocessor] Normalizasyon işlemi başlatılıyor...')
+        features_to_scale = self._resolve_feature_columns(train_df, feature_cols)
+        print(f'[Preprocessor] Scaler fit ediliyor... (Özellik sayısı: {len(features_to_scale)})')
+        self.scaler.fit(train_df[features_to_scale])
+        train_scaled = train_df.copy()
+        val_scaled = val_df.copy()
+        test_scaled = test_df.copy()
+        train_scaled[features_to_scale] = self.scaler.transform(train_df[features_to_scale])
+        val_scaled[features_to_scale] = self.scaler.transform(val_df[features_to_scale])
+        test_scaled[features_to_scale] = self.scaler.transform(test_df[features_to_scale])
+        print('[Preprocessor] Normalizasyon tamamlandı. [Data Leakage Önlemi: Aktif]')
+        return (train_scaled, val_scaled, test_scaled, features_to_scale)
+
+    def apply_pca(self, train_scaled, val_scaled, test_scaled, features_to_scale):
+        print('\n[Preprocessor] PCA (Boyut İndirgeme) işlemi başlatılıyor...')
+        self.pca = PCA(n_components=1)
+        self.pca.fit(train_scaled[features_to_scale])
+        train_pc1 = self.pca.transform(train_scaled[features_to_scale]).flatten()
+        val_pc1 = self.pca.transform(val_scaled[features_to_scale]).flatten()
+        test_pc1 = self.pca.transform(test_scaled[features_to_scale]).flatten()
+        explained = self.pca.explained_variance_ratio_[0] * 100
+        print(f'[Preprocessor] PCA tamamlandı. Explained Variance: %{explained:.2f}')
+        return (train_pc1, val_pc1, test_pc1)
+
+================================================================================
+DOSYA: src/preprocessing/sax_converter.py
+================================================================================
+import numpy as np
+from scipy.stats import norm
+
+class SAXConverter:
+
+    def __init__(self, config):
+        self.alphabet_size = config['automata']['base_params']['alphabet_size']
+        self.breakpoints = None
+        self.mean = 0.0
+        self.std = 1.0
+
+    def _normalize(self, pc1_data):
+        if self.std == 0:
+            return np.zeros_like(pc1_data, dtype=float)
+        return (np.asarray(pc1_data, dtype=float) - self.mean) / self.std
+
+    def fit_transform(self, train_pc1):
+        print(f'\n[SAXConverter] Train verisinden SAX söklüğü çıkarılıyor... (Alfabe Boyutu: {self.alphabet_size})')
+        train_array = np.asarray(train_pc1, dtype=float)
+        self.mean = float(np.mean(train_array))
+        self.std = float(np.std(train_array))
+        if self.std == 0:
+            self.std = 1.0
+        percentiles = np.linspace(1 / self.alphabet_size, 1 - 1 / self.alphabet_size, self.alphabet_size - 1)
+        self.breakpoints = norm.ppf(percentiles)
+        print(f'[SAXConverter] Train mean={self.mean:.4f}, std={self.std:.4f}')
+        print(f'[SAXConverter] SAX Kesme Noktaları: {self.breakpoints}')
+        return self.transform(train_pc1)
+
+    def transform(self, pc1_data):
+        normalized = self._normalize(pc1_data)
+        indices = np.digitize(normalized, self.breakpoints)
+        alphabet = [chr(97 + i) for i in range(self.alphabet_size)]
+        sax_symbols = np.array([alphabet[idx] for idx in indices])
+        print(f"[SAXConverter] SAX dönüşümü tamamlandı. Örnek sekans: {''.join(sax_symbols[:10])}...")
+        return sax_symbols
+
+================================================================================
+DOSYA: src/utils/__init__.py
+================================================================================
+
+
+================================================================================
+DOSYA: src/utils/analyzer.py
+================================================================================
+import copy
+import os
+import pandas as pd
+from src.models.automata import ProbabilisticAutomata
+from src.preprocessing.sax_converter import SAXConverter
+
+class ParameterAnalyzer:
+
+    def __init__(self, config, base_automata):
+        self.config = config
+        self.automata = base_automata
+        self.window_sizes = config['automata']['variation_params']['window_sizes']
+        self.alphabet_sizes = config['automata']['variation_params']['alphabet_sizes']
+        self.base_window = config['automata']['base_params']['window_size']
+
+    def _evaluate_automata_performance(self, train_pc1, test_pc1, test_labels, window_size, sax_converter):
+        automata = ProbabilisticAutomata(self.config, sax_converter)
+        automata.fit(train_pc1, window_size=window_size)
+        y_true, y_pred, _, _, _ = automata.predict_from_pc1(test_pc1, test_labels)
+        return automata.evaluate_metrics(y_true, y_pred)
+
+    def analyze_window_size(self, train_pc1, test_pc1, test_labels, sax_converter):
+        print('\n[ParameterAnalyzer] Window Size duyarlılık analizi başlatıldı...')
+        results = []
+        for w_size in self.window_sizes:
+            patterns = self.automata.extract_patterns(sax_converter.transform(self.automata.apply_paa(train_pc1)), window_size=w_size)
+            transitions = self.automata.build_transition_model(patterns)
+            state_count = len(transitions)
+            total_transitions = sum((len(v) for v in transitions.values()))
+            transition_density = total_transitions / (state_count + 1e-05)
+            performance = self._evaluate_automata_performance(train_pc1, test_pc1, test_labels, w_size, sax_converter)
+            results.append({'Parameter': 'Window_Size', 'Value': w_size, 'State_Count': state_count, 'Transition_Density': round(transition_density, 3), 'Accuracy': round(performance['Accuracy'], 4), 'F1_Score': round(performance['F1_Score'], 4)})
+            print(f"  -> Window {w_size}: State={state_count}, Yoğunluk={transition_density:.3f}, F1={performance['F1_Score']:.4f}")
+        return results
+
+    def analyze_alphabet_size(self, train_pc1, test_pc1, test_labels, sax_converter_class):
+        print('\n[ParameterAnalyzer] Alphabet Size duyarlılık analizi başlatıldı...')
+        results = []
+        for a_size in self.alphabet_sizes:
+            temp_config = copy.deepcopy(self.config)
+            temp_config['automata']['base_params']['alphabet_size'] = a_size
+            temp_sax = sax_converter_class(temp_config)
+            temp_sax.fit_transform(train_pc1)
+            patterns = self.automata.extract_patterns(temp_sax.transform(self.automata.apply_paa(train_pc1)), window_size=self.base_window)
+            transitions = self.automata.build_transition_model(patterns)
+            state_count = len(transitions)
+            total_transitions = sum((len(v) for v in transitions.values()))
+            transition_density = total_transitions / (state_count + 1e-05)
+            performance = self._evaluate_automata_performance(train_pc1, test_pc1, test_labels, self.base_window, temp_sax)
+            results.append({'Parameter': 'Alphabet_Size', 'Value': a_size, 'State_Count': state_count, 'Transition_Density': round(transition_density, 3), 'Accuracy': round(performance['Accuracy'], 4), 'F1_Score': round(performance['F1_Score'], 4)})
+            print(f"  -> Alphabet {a_size}: State={state_count}, Yoğunluk={transition_density:.3f}, F1={performance['F1_Score']:.4f}")
+        return results
+
+    def export_analysis_to_table(self, all_results, filepath='logs/parameter_analysis.csv'):
+        print(f'\n[ParameterAnalyzer] Sonuçlar dışa aktarılıyor: {filepath}')
+        if not all_results:
+            print('[Uyarı] Dışa aktarılacak analiz sonucu bulunamadı.')
+            return None
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        df_results = pd.DataFrame(all_results)
+        df_results.to_csv(filepath, index=False)
+        print('[ParameterAnalyzer] Tablo kaydedildi.')
+        return df_results
+
+================================================================================
+DOSYA: src/utils/logger.py
+================================================================================
+import json
+import os
+from datetime import datetime
+
+class ExperimentLogger:
+
+    def __init__(self, config):
+        self.config = config
+        self.log_dir = config['paths']['logs']
+        os.makedirs(self.log_dir, exist_ok=True)
+        self.experiment_id = datetime.now().strftime('%Y%m%d_%H%M%S')
+        self.log_file = os.path.join(self.log_dir, f'exp_{self.experiment_id}.json')
+        self.results = {'experiment_id': self.experiment_id, 'config': self.config, 'dataset_info': {}, 'metrics': {}, 'fold_results': {}, 'scenario_summaries': {}, 'batadal_test_results': {}, 'aggregated_results': {}, 'statistical_tests': [], 'explainability': [], 'parameter_analysis': [], 'runtime_records': [], 'unseen_analysis': []}
+
+    def log_dataset_info(self, dataset_name, info):
+        self.results['dataset_info'][dataset_name] = info
+        self.save()
+
+    def log_metrics(self, model_name, metrics):
+        self.results['metrics'][model_name] = metrics
+        self.save()
+
+    def log_fold_metrics(self, dataset_name, fold_idx, model_name, scenario, metrics):
+        key = f'{dataset_name}_fold_{fold_idx}_{model_name}_{scenario}'
+        self.results['fold_results'][key] = metrics
+        self.save()
+
+    def log_scenario_summary(self, dataset_name, seed, scenario, summary):
+        key = f'{dataset_name}_seed_{seed}_{scenario}'
+        self.results['scenario_summaries'][key] = summary
+        self.save()
+
+    def log_batadal_test_result(self, seed, scenario, model_name, metrics):
+        key = f'seed_{seed}_{model_name}_{scenario}'
+        self.results['batadal_test_results'][key] = metrics
+        self.save()
+
+    def log_aggregated_metrics(self, key, metrics):
+        self.results['aggregated_results'][key] = metrics
+        self.save()
+
+    def log_statistical_test(self, test_result):
+        self.results['statistical_tests'].append(test_result)
+        self.save()
+
+    def log_parameter_analysis(self, analysis_rows):
+        self.results['parameter_analysis'].extend(analysis_rows)
+        self.save()
+
+    def log_explainability(self, decision_data):
+        self.results['explainability'].append(decision_data)
+        self.save()
+
+    def log_runtime_record(self, record):
+        self.results['runtime_records'].append(record)
+        self.save()
+
+    def log_unseen_analysis(self, record):
+        self.results['unseen_analysis'].append(record)
+        self.save()
+
+    def save(self):
+        with open(self.log_file, 'w', encoding='utf-8') as f:
+            json.dump(self.results, f, indent=4, ensure_ascii=False)
+
+    def export_summary_csv(self, filepath='logs/experiment_summary.csv'):
+        import pandas as pd
+        rows = []
+        for key, metrics in self.results['metrics'].items():
+            row = {'experiment_key': key}
+            row.update(metrics)
+            rows.append(row)
+        if not rows:
+            return None
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        df = pd.DataFrame(rows)
+        df.to_csv(filepath, index=False)
+        print(f'[Logger] Özet tablo kaydedildi: {filepath}')
+        return df
+
+    def export_explainability(self):
+        explain_cfg = self.config.get('explainability', {})
+        rows = self.results['explainability']
+        if not rows:
+            print('[Logger] Explainability kaydı bulunamadı, export atlandı.')
+            return
+        json_path = explain_cfg.get('export_json', 'logs/explainability_report.json')
+        csv_path = explain_cfg.get('export_csv', 'logs/explainability_report.csv')
+        os.makedirs(os.path.dirname(json_path), exist_ok=True)
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(rows, f, indent=4, ensure_ascii=False)
+        print(f'[Logger] Explainability JSON kaydedildi: {json_path}')
+        import pandas as pd
+        flat_rows = []
+        for row in rows:
+            flat = {k: v for k, v in row.items() if k != 'transitions'}
+            flat_rows.append(flat)
+        pd.DataFrame(flat_rows).to_csv(csv_path, index=False)
+        print(f'[Logger] Explainability CSV kaydedildi: {csv_path}')
+
+    def export_runtime_csv(self, filepath='logs/runtime_comparison.csv'):
+        import pandas as pd
+        rows = self.results.get('runtime_records', [])
+        if not rows:
+            print('[Logger] Runtime kaydı bulunamadı, export atlandı.')
+            return None
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        df = pd.DataFrame(rows)
+        df.to_csv(filepath, index=False)
+        print(f'[Logger] Runtime tablosu kaydedildi: {filepath}')
+        return df
+
+    def export_unseen_analysis_csv(self, filepath='logs/unseen_analysis.csv'):
+        import pandas as pd
+        rows = self.results.get('unseen_analysis', [])
+        if not rows:
+            print('[Logger] Unseen analiz kaydı bulunamadı, export atlandı.')
+            return None
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        df = pd.DataFrame(rows)
+        df.to_csv(filepath, index=False)
+        print(f'[Logger] Unseen analiz tablosu kaydedildi: {filepath}')
+        return df
+
+================================================================================
+DOSYA: src/utils/metrics.py
+================================================================================
+import numpy as np
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+class MetricCalculator:
+
+    def __init__(self, logger):
+        self.logger = logger
+
+    def evaluate_and_log(self, model, x_test, y_test, threshold, model_name):
+        print(f'\n[{model_name}] Test Verisi Üzerinde Değerlendirme Başlıyor...')
+        predictions = model.predict(x_test)
+        mse = np.mean(np.power(x_test - predictions, 2), axis=1)
+        y_pred = (mse > threshold).astype(int)
+        metrics = {'Accuracy': float(accuracy_score(y_test, y_pred)), 'Precision': float(precision_score(y_test, y_pred, zero_division=0)), 'Recall': float(recall_score(y_test, y_pred, zero_division=0)), 'F1_Score': float(f1_score(y_test, y_pred, zero_division=0))}
+        print(f'[{model_name}] Hesaplanan Metrikler: {metrics}')
+        self.logger.log_metrics(model_name, metrics)
+        return (metrics, y_pred)
+
+================================================================================
+DOSYA: src/utils/seed_manager.py
+================================================================================
+import random
+import os
+import numpy as np
+import tensorflow as tf
+
+def set_deterministic_seed(seed_value):
+    os.environ['PYTHONHASHSEED'] = str(seed_value)
+    random.seed(seed_value)
+    np.random.seed(seed_value)
+    tf.random.set_seed(seed_value)
+    os.environ['TF_DETERMINISTIC_OPS'] = '1'
+    os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
+    print(f'[Seed Manager] Random seed {seed_value} olarak sabitlendi ve sistem deterministik hale getirildi.')
+
+================================================================================
+DOSYA: src/utils/sequence_builder.py
+================================================================================
+import time
+import numpy as np
+
+def create_sequences(feature_matrix, labels, seq_len):
+    if len(feature_matrix) < seq_len:
+        return (np.empty((0, seq_len, feature_matrix.shape[1])), np.empty((0,)))
+    sequences = []
+    sequence_labels = []
+    for start in range(len(feature_matrix) - seq_len + 1):
+        end = start + seq_len
+        sequences.append(feature_matrix[start:end])
+        sequence_labels.append(int(np.max(labels[start:end])))
+    return (np.array(sequences), np.array(sequence_labels))
+
+def reconstruction_scores(model, x_data):
+    predictions = model.predict(x_data, verbose=0)
+    return np.mean(np.power(x_data - predictions, 2), axis=(1, 2))
+
+def threshold_from_validation(model, x_val, percentile):
+    scores = reconstruction_scores(model, x_val)
+    if len(scores) == 0:
+        return 0.0
+    return float(np.percentile(scores, percentile))
+
+def predict_with_threshold(model, x_test, threshold):
+    start = time.perf_counter()
+    scores = reconstruction_scores(model, x_test)
+    y_pred = (scores > threshold).astype(int)
+    inference_time = round(time.perf_counter() - start, 4)
+    return (y_pred, scores, inference_time)
+
+================================================================================
+DOSYA: src/utils/statistics.py
+================================================================================
+import numpy as np
+
+class StatisticalAnalyzer:
+
+    def calculate_mean_and_std(self, metrics_list):
+        print('\n[StatAnalyzer] Ortalama ve Standart Sapma hesaplanıyor...')
+        aggregated = {}
+        if not metrics_list:
+            return aggregated
+        keys = metrics_list[0].keys()
+        for key in keys:
+            values = [m[key] for m in metrics_list]
+            mean_val = np.mean(values)
+            std_val = np.std(values)
+            aggregated[key] = f'{mean_val:.4f} ± {std_val:.4f}'
+        return aggregated
+
+    def calculate_numeric_mean_std(self, values):
+        if not values:
+            return {'mean': 0.0, 'std': 0.0}
+        return {'mean': float(np.mean(values)), 'std': float(np.std(values))}
+
+    def run_wilcoxon_test(self, model1_f1_scores, model2_f1_scores, label='Model'):
+        from scipy.stats import wilcoxon
+        print(f'\n[StatAnalyzer] Wilcoxon testi: {label}')
+        if len(model1_f1_scores) < 2 or len(model2_f1_scores) < 2:
+            print('[Uyarı] Wilcoxon için yeterli örnek yok.')
+            return {'test': 'wilcoxon', 'label': label, 'p_value': None, 'significance': 'Yetersiz veri'}
+        try:
+            stat, p_value = wilcoxon(model1_f1_scores, model2_f1_scores)
+            significance = 'Anlamlı Fark VAR (p < 0.05)' if p_value < 0.05 else 'Anlamlı Fark YOK (p >= 0.05)'
+            print(f'Wilcoxon Stat: {stat:.4f}, p-value: {p_value:.4f} -> {significance}')
+            return {'test': 'wilcoxon', 'label': label, 'statistic': float(stat), 'p_value': float(p_value), 'significance': significance}
+        except Exception as exc:
+            print(f'[Hata] Wilcoxon uygulanamadı: {exc}')
+            return {'test': 'wilcoxon', 'label': label, 'p_value': None, 'significance': str(exc)}
+
+    def run_mcnemar_test(self, y_true, y_pred_a, y_pred_b, label='Model'):
+        from scipy.stats import chi2
+        print(f'\n[StatAnalyzer] McNemar testi: {label}')
+        if len(y_true) == 0:
+            return {'test': 'mcnemar', 'label': label, 'p_value': None, 'significance': 'Yetersiz veri'}
+        min_len = min(len(y_true), len(y_pred_a), len(y_pred_b))
+        if min_len == 0:
+            return {'test': 'mcnemar', 'label': label, 'p_value': None, 'significance': 'Yetersiz veri'}
+        if len({len(y_true), len(y_pred_a), len(y_pred_b)}) > 1:
+            print(f'[Uyarı] McNemar için uzunluklar hizalanıyor: {len(y_true)}, {len(y_pred_a)}, {len(y_pred_b)} -> {min_len}')
+            y_true = y_true[:min_len]
+            y_pred_a = y_pred_a[:min_len]
+            y_pred_b = y_pred_b[:min_len]
+        both_correct = np.sum((y_pred_a == y_true) & (y_pred_b == y_true))
+        a_correct_b_wrong = np.sum((y_pred_a == y_true) & (y_pred_b != y_true))
+        a_wrong_b_correct = np.sum((y_pred_a != y_true) & (y_pred_b == y_true))
+        both_wrong = np.sum((y_pred_a != y_true) & (y_pred_b != y_true))
+        if a_correct_b_wrong + a_wrong_b_correct == 0:
+            return {'test': 'mcnemar', 'label': label, 'p_value': 1.0, 'significance': 'Anlamlı Fark YOK (p >= 0.05)', 'discordant_pairs': 0}
+        statistic = (abs(a_correct_b_wrong - a_wrong_b_correct) - 1) ** 2 / (a_correct_b_wrong + a_wrong_b_correct)
+        p_value = 1 - chi2.cdf(statistic, df=1)
+        significance = 'Anlamlı Fark VAR (p < 0.05)' if p_value < 0.05 else 'Anlamlı Fark YOK (p >= 0.05)'
+        print(f'McNemar: b01={a_correct_b_wrong}, b10={a_wrong_b_correct}, p-value={p_value:.4f} -> {significance}')
+        return {'test': 'mcnemar', 'label': label, 'statistic': float(statistic), 'p_value': float(p_value), 'significance': significance, 'discordant_pairs': int(a_correct_b_wrong + a_wrong_b_correct), 'both_wrong': int(both_wrong), 'both_correct': int(both_correct)}
+
+================================================================================
+DOSYA: src/utils/visualizer.py
+================================================================================
+import os
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+
+class Visualizer:
+
+    def __init__(self, config):
+        self.config = config
+        self.log_dir = config['paths']['logs']
+        os.makedirs(self.log_dir, exist_ok=True)
+
+    def plot_confusion_matrix(self, y_true, y_pred, model_name):
+        from sklearn.metrics import confusion_matrix
+        print(f'\n[Visualizer] {model_name} için Confusion Matrix oluşturuluyor...')
+        cm = confusion_matrix(y_true, y_pred)
+        plt.figure(figsize=(6, 5))
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=['Normal', 'Anomaly'], yticklabels=['Normal', 'Anomaly'])
+        plt.title(f'{model_name} - Confusion Matrix')
+        plt.ylabel('Gerçek Etiket')
+        plt.xlabel('Tahmin Edilen Etiket')
+        save_path = os.path.join(self.log_dir, f'{model_name}_confusion_matrix.png')
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close()
+        print(f'[Visualizer] Grafik kaydedildi: {save_path}')
+
+    def plot_roc_curve(self, y_true, y_scores, model_name):
+        from sklearn.metrics import auc, roc_curve
+        print(f'[Visualizer] {model_name} için ROC eğrisi oluşturuluyor...')
+        try:
+            fpr, tpr, _ = roc_curve(y_true, y_scores)
+            roc_auc = auc(fpr, tpr)
+            plt.figure(figsize=(6, 5))
+            plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (AUC = {roc_auc:.2f})')
+            plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+            plt.xlim([0.0, 1.0])
+            plt.ylim([0.0, 1.05])
+            plt.xlabel('False Positive Rate')
+            plt.ylabel('True Positive Rate')
+            plt.title(f'{model_name} - ROC Eğrisi')
+            plt.legend(loc='lower right')
+            save_path = os.path.join(self.log_dir, f'{model_name}_roc_curve.png')
+            plt.savefig(save_path, bbox_inches='tight')
+            plt.close()
+            print(f'[Visualizer] Grafik kaydedildi: {save_path}')
+        except Exception as e:
+            print(f'[Hata] ROC eğrisi çizilemedi: {e}')
+
+    def plot_pr_curve(self, y_true, y_scores, model_name):
+        from sklearn.metrics import average_precision_score, precision_recall_curve
+        print(f'[Visualizer] {model_name} için PR eğrisi oluşturuluyor...')
+        try:
+            precision, recall, _ = precision_recall_curve(y_true, y_scores)
+            ap_score = average_precision_score(y_true, y_scores)
+            plt.figure(figsize=(6, 5))
+            plt.plot(recall, precision, color='teal', lw=2, label=f'AP = {ap_score:.2f}')
+            plt.xlim([0.0, 1.0])
+            plt.ylim([0.0, 1.05])
+            plt.xlabel('Recall')
+            plt.ylabel('Precision')
+            plt.title(f'{model_name} - Precision-Recall Eğrisi')
+            plt.legend(loc='lower left')
+            save_path = os.path.join(self.log_dir, f'{model_name}_pr_curve.png')
+            plt.savefig(save_path, bbox_inches='tight')
+            plt.close()
+            print(f'[Visualizer] Grafik kaydedildi: {save_path}')
+        except Exception as e:
+            print(f'[Hata] PR eğrisi çizilemedi: {e}')
+
+    def plot_transition_heatmap(self, transition_probs, top_n=None, suffix=''):
+        top_n = top_n or self.config['automata']['visualization'].get('heatmap_top_n', 20)
+        print(f'[Visualizer] Automata Transition Heatmap oluşturuluyor (Top {top_n} durum)...')
+        df_trans = pd.DataFrame(transition_probs).fillna(0)
+        if len(df_trans) > top_n:
+            top_states = df_trans.sum(axis=1).sort_values(ascending=False).head(top_n).index
+            df_trans = df_trans.loc[top_states, top_states].fillna(0)
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(df_trans, cmap='YlGnBu', annot=False, cbar_kws={'label': 'Geçiş Olasılığı'})
+        plt.title('Olasılıksal Otomata - Transition Probability Heatmap')
+        plt.xlabel('Sonraki Durum')
+        plt.ylabel('Mevcut Durum')
+        save_path = os.path.join(self.log_dir, f'automata_transition_heatmap{suffix}.png')
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close()
+        print(f'[Visualizer] Grafik kaydedildi: {save_path}')
+
+    def plot_state_diagram(self, transition_probs, threshold=None, suffix=''):
+        import networkx as nx
+        threshold = threshold or self.config['automata']['visualization'].get('state_diagram_threshold', 0.1)
+        print(f'[Visualizer] Automata State Diagram oluşturuluyor (Threshold: {threshold})...')
+        G = nx.DiGraph()
+        for current_state, transitions in transition_probs.items():
+            for next_state, prob in transitions.items():
+                if prob >= threshold:
+                    G.add_edge(current_state, next_state, weight=prob)
+        if len(G.nodes) == 0:
+            print('[Uyarı] State diagram için yeterli geçiş bulunamadı.')
+            return
+        plt.figure(figsize=(12, 10))
+        pos = nx.spring_layout(G, k=0.5, seed=42)
+        nx.draw_networkx_nodes(G, pos, node_size=2000, node_color='lightblue', alpha=0.8)
+        nx.draw_networkx_labels(G, pos, font_size=10, font_weight='bold')
+        nx.draw_networkx_edges(G, pos, edge_color='gray', arrows=True, arrowsize=20, width=1.5)
+        edge_labels = {(u, v): f"{d['weight']:.2f}" for u, v, d in G.edges(data=True)}
+        nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8)
+        plt.title(f'Automata State Diagram (Geçişler >= {threshold})')
+        plt.axis('off')
+        save_path = os.path.join(self.log_dir, f'automata_state_diagram{suffix}.png')
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close()
+        print(f'[Visualizer] Grafik kaydedildi: {save_path}')
+
+    def plot_parameter_sensitivity(self, results_list, param_col, value_col, title, suffix=''):
+        print(f'[Visualizer] Parametre Duyarlılık Grafiği oluşturuluyor: {title}...')
+        if not results_list:
+            print('[Uyarı] Çizilecek veri bulunamadı.')
+            return
+        results_df = pd.DataFrame(results_list)
+        plt.figure(figsize=(8, 5))
+        sns.lineplot(data=results_df, x=param_col, y=value_col, marker='o', linewidth=2, color='coral')
+        plt.title(title)
+        plt.xlabel(param_col.replace('_', ' '))
+        plt.ylabel(value_col.replace('_', ' '))
+        plt.grid(True, linestyle='--', alpha=0.7)
+        safe_title = title.replace(' ', '_').lower()
+        save_path = os.path.join(self.log_dir, f'sensitivity_{safe_title}{suffix}.png')
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close()
+        print(f'[Visualizer] Grafik kaydedildi: {save_path}')
+
+================================================================================
+DOSYA: tests/test_automata.py
+================================================================================
+import os
+import sys
+import unittest
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from src.models.automata import ProbabilisticAutomata
+
+class MockConfig:
+
+    def __init__(self):
+        self.config = {'automata': {'base_params': {'window_size': 4, 'alphabet_size': 3, 'paa_segment_size': 1, 'path_probability_threshold': 0.05, 'smoothing_alpha': 1.0, 'unknown_transition_prob': 0.001}, 'variation_params': {'window_sizes': [3, 4, 5, 6]}}}
+
+    def __getitem__(self, key):
+        return self.config[key]
+
+class TestAutomataUnseen(unittest.TestCase):
+
+    def setUp(self):
+        self.config = MockConfig()
+        self.automata = ProbabilisticAutomata(self.config, sax_converter=None)
+        self.automata.transition_probabilities = {'abc': {'bcd': 0.8, 'aaa': 0.2}, 'def': {'efg': 1.0}}
+        self.automata.train_pattern_set = {'abc', 'bcd', 'def', 'efg'}
+
+    def test_levenshtein_distance(self):
+        self.assertEqual(self.automata.calculate_levenshtein_distance('abc', 'abd'), 1)
+        self.assertEqual(self.automata.calculate_levenshtein_distance('abc', 'xyz'), 3)
+
+    def test_handle_unseen_pattern(self):
+        closest, distance = self.automata.handle_unseen_pattern('abx')
+        self.assertEqual(closest, 'abc')
+        self.assertEqual(distance, 1)
+
+    def test_resolve_pattern_known(self):
+        mapped, is_unseen, distance = self.automata.resolve_pattern('abc')
+        self.assertFalse(is_unseen)
+        self.assertEqual(mapped, 'abc')
+        self.assertEqual(distance, 0)
+
+    def test_resolve_pattern_unseen(self):
+        mapped, is_unseen, distance = self.automata.resolve_pattern('abx')
+        self.assertTrue(is_unseen)
+        self.assertEqual(mapped, 'abc')
+        self.assertEqual(distance, 1)
+
+    def test_get_transition_probability_unknown(self):
+        prob = self.automata.get_transition_probability('abc', 'zzz')
+        self.assertEqual(prob, 0.001)
+
+    def test_calculate_path_probability(self):
+        path_prob, transitions = self.automata.calculate_path_probability(['abc', 'bcd'])
+        self.assertAlmostEqual(path_prob, 0.8, places=4)
+        self.assertEqual(len(transitions), 1)
+        self.assertEqual(transitions[0]['from'], 'abc')
+        self.assertEqual(transitions[0]['to'], 'bcd')
+
+    def test_evaluate_confidence(self):
+        decision, confidence = self.automata.evaluate_confidence(0.01)
+        self.assertEqual(decision, 'ANOMALY')
+        self.assertAlmostEqual(confidence, 0.01, places=4)
+        decision, confidence = self.automata.evaluate_confidence(0.9)
+        self.assertEqual(decision, 'NORMAL')
+        self.assertAlmostEqual(confidence, 0.9, places=4)
+
+    def test_build_transition_model_smoothing(self):
+        automata = ProbabilisticAutomata(self.config, sax_converter=None)
+        automata.build_transition_model(['abc', 'bcd', 'abc', 'bcd'])
+        probs = automata.transition_probabilities['abc']
+        self.assertAlmostEqual(sum(probs.values()), 1.0, places=4)
+        self.assertTrue(all((prob > 0 for prob in probs.values())))
+
+    def test_generate_explanation_json(self):
+        explanation = self.automata.generate_explanation_json(time_step=5, current_state='abc', incoming_pattern='adc', is_unseen=True, mapped_state='abc', path_prob=0.108, decision='ANOMALY', transitions=[{'from': 'abc', 'to': 'bcd', 'probability': 0.72}], distance=1, confidence=0.108)
+        self.assertEqual(explanation['time_step'], 5)
+        self.assertEqual(explanation['status'], 'unseen')
+        self.assertEqual(explanation['decision'], 'anomaly')
+        self.assertEqual(explanation['confidence_label'], 'low')
+        self.assertIn('probability', explanation)
+if __name__ == '__main__':
+    unittest.main()
